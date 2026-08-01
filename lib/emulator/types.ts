@@ -83,6 +83,8 @@ export interface DosContext {
   reg: Registers;
   mem: Uint8Array;
   print: (text: string) => void;
+  /** Write one DOS console byte with CP437 / control handling. */
+  printByte: (byte: number) => void;
   halt: () => void;
   readInputChar: () => string | null;
   peekInputChar: () => string | null;

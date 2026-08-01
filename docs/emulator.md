@@ -87,6 +87,14 @@ console.log(machine.output);
 ### INT 20h
 Program terminate.
 
+## Console output
+
+- Bytes from INT 21h / 10h are mapped through **IBM PC Code Page 437** (classic DOS glyphs).
+- `0Ah` (LF) moves the cursor **down one row** and keeps the column.
+- `0Dh` (CR) moves the cursor to **column 0** without changing the row (can overwrite the line).
+- Together (`LF+CR` or `CR+LF`) they form a normal new line.
+- `07h` BEL is silent; `08h` BS backs up one column; `09h` TAB expands to 8-column stops.
+
 ## Extending
 
 1. Add a `case` in `Machine.executeInstruction()` (`machine.ts`)

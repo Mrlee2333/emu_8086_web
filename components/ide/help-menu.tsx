@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AdSenseUnit, AD_SLOTS } from "@/components/ads/adsense-unit";
 import { AuthorContacts } from "@/components/ide/author-contacts";
 import { DialogShell } from "@/components/ide/dialog-shell";
@@ -17,8 +18,13 @@ import {
   type ShortcutId,
   type ShortcutScheme,
 } from "@/lib/ide/shortcuts";
+import {
+  cp437TableDisplay,
+  getAllCp437Entries,
+  getCp437Entry,
+  type Cp437Entry,
+} from "@/lib/emulator/cp437";
 import { APP_AUTHOR, APP_NAME, APP_REPO_URL, APP_TAGLINE, APP_VERSION } from "@/lib/version";
-
 
 export type HelpPanel =
   | null
@@ -159,7 +165,13 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
         open={!!dialogPanel}
         onClose={() => setPanel(null)}
         title={meta?.title ?? ""}
-        panelClassName={meta?.wide ? "max-w-5xl" : "max-w-lg"}
+        panelClassName={
+          meta?.wide
+            ? dialogPanel === "ascii"
+              ? "max-w-6xl"
+              : "max-w-5xl"
+            : "max-w-lg"
+        }
         footer={
           <>
             <div className="border-t border-line/60 pt-3">
@@ -182,84 +194,207 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
   );
 }
 
-const ASCII_NAMES: Record<number, string> = {
-  0: "NUL",
-  1: "SOH",
-  2: "STX",
-  3: "ETX",
-  4: "EOT",
-  5: "ENQ",
-  6: "ACK",
-  7: "BEL",
-  8: "BS",
-  9: "TAB",
-  10: "LF",
-  11: "VT",
-  12: "FF",
-  13: "CR",
-  14: "SO",
-  15: "SI",
-  16: "DLE",
-  17: "DC1",
-  18: "DC2",
-  19: "DC3",
-  20: "DC4",
-  21: "NAK",
-  22: "SYN",
-  23: "ETB",
-  24: "CAN",
-  25: "EM",
-  26: "SUB",
-  27: "ESC",
-  28: "FS",
-  29: "GS",
-  30: "RS",
-  31: "US",
-  32: "SPACE",
-  127: "DEL",
-};
+const ROW_OPTIONS = [32, 16, 10] as const;
+const CELL_HEIGHT_PX = 40; // cell + gap estimate for fit math
 
-function asciiLabel(code: number): string {
-  if (ASCII_NAMES[code] !== undefined) return ASCII_NAMES[code]!;
-  if (code > 32 && code < 127) return String.fromCharCode(code);
-  return "·";
+function pickAsciiRows(availablePx: number): (typeof ROW_OPTIONS)[number] {
+  for (const n of ROW_OPTIONS) {
+    if (availablePx >= n * CELL_HEIGHT_PX) return n;
+  }
+  return 10;
 }
 
-function AsciiTable() {
-  const cells = Array.from({ length: 128 }, (_, code) => ({
-    code,
-    ch: asciiLabel(code),
-  }));
+function asciiGlyph(entry: Cp437Entry): string {
+  if (entry.code === 0) return "NUL";
+  if (entry.code === 32) return "␠";
+  if (entry.code === 255) return "NBSP";
+  return entry.char;
+}
+
+function AsciiInfoTip({ entry }: { entry: Cp437Entry }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+  const tipH = entry.fullForm ? 128 : 96;
+
+  const show = () => {
+    const btn = btnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const tipW = 200;
+    const gap = 8;
+    const preferBelow = window.innerHeight - r.bottom >= tipH + gap;
+    const top = preferBelow
+      ? r.bottom + gap
+      : Math.max(8, r.top - tipH - gap);
+    let left = r.left + r.width / 2 - tipW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+    setCoords({ top, left });
+    setOpen(true);
+  };
+
+  const hide = () => setOpen(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMove = () => {
+      const btn = btnRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const tipW = 200;
+      const gap = 8;
+      const preferBelow = window.innerHeight - r.bottom >= tipH + gap;
+      const top = preferBelow
+        ? r.bottom + gap
+        : Math.max(8, r.top - tipH - gap);
+      let left = r.left + r.width / 2 - tipW / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+      setCoords({ top, left });
+    };
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open, tipH]);
+
+  const glyph = asciiGlyph(entry);
+  const abbrev =
+    entry.code === 0
+      ? "NUL"
+      : entry.fullForm
+        ? entry.meaning
+        : null;
+  const blurb =
+    entry.code === 0
+      ? "Null — no character"
+      : entry.fullForm
+        ? entry.fullForm
+        : entry.code >= 32 && entry.code < 127
+          ? "Printable ASCII"
+          : entry.code > 127
+            ? "Code Page 437 glyph"
+            : null;
 
   return (
     <>
-      <p className="text-sm text-ink-dim">
-        0–127 reference · Dec · Char · Hex — control chars use standard names
-        (TAB, SPACE, CR, LF…)
-      </p>
-      <div className="mt-4 grid grid-cols-2 gap-1.5 font-mono text-xs sm:grid-cols-4 sm:gap-2 sm:text-sm md:grid-cols-6 lg:grid-cols-8">
-        {cells.map((c) => (
-          <div
-            key={c.code}
-            className="flex items-center justify-between gap-2 rounded border border-line/70 bg-panel-2/40 px-2 py-1.5 sm:px-2.5 sm:py-2"
-          >
-            <span className="min-w-[2ch] text-amber tabular-nums">{c.code}</span>
-            <span
-              className={`min-w-[3.5ch] text-center ${
-                ASCII_NAMES[c.code] !== undefined
-                  ? "text-[10px] tracking-wide text-ink-dim uppercase sm:text-[11px]"
-                  : "text-ink"
-              }`}
+      <button
+        ref={btnRef}
+        type="button"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-line/80 bg-panel text-[9px] leading-none text-ink-dim hover:border-amber hover:text-amber focus-visible:border-amber focus-visible:text-amber"
+        aria-label={`About code ${entry.code}`}
+        aria-expanded={open}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+      >
+        i
+      </button>
+      {open
+        ? createPortal(
+            <div
+              role="tooltip"
+              className="pointer-events-none fixed z-[100] w-[200px] overflow-hidden rounded-md border border-line bg-panel shadow-2xl"
+              style={{ top: coords.top, left: coords.left }}
             >
-              {c.ch}
-            </span>
-            <span className="text-ink-dim tabular-nums">
-              {c.code.toString(16).padStart(2, "0").toUpperCase()}h
-            </span>
-          </div>
-        ))}
-      </div>
+              <div className="flex items-center justify-center border-b border-line/60 bg-panel-2/50 px-3 py-3">
+                <span className="font-mono text-3xl leading-none text-amber">
+                  {glyph}
+                </span>
+              </div>
+              <div className="space-y-1.5 px-3 py-2.5">
+                {abbrev ? (
+                  <span className="inline-block rounded bg-amber/15 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-amber uppercase">
+                    {abbrev}
+                  </span>
+                ) : null}
+                {blurb ? (
+                  <p className="text-[12px] leading-snug text-ink">{blurb}</p>
+                ) : null}
+                <p className="font-mono text-[10px] text-ink-dim tabular-nums">
+                  {entry.code.toString().padStart(3, "0")} ·{" "}
+                  {entry.code.toString(16).padStart(2, "0").toUpperCase()}h
+                </p>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
+  );
+}
+
+function AsciiTable() {
+  const cells = getAllCp437Entries();
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [rows, setRows] = useState<(typeof ROW_OPTIONS)[number]>(16);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      // Fit columns to the dialog viewport: prefer 32, then 16, then 10.
+      const dialog = shellRef.current?.closest('[role="dialog"]');
+      const panel = dialog?.querySelector(":scope > div");
+      const panelH =
+        panel instanceof HTMLElement
+          ? panel.clientHeight
+          : Math.floor(window.innerHeight * 0.9);
+      // Reserve space for title, intro, ads footer, padding
+      const available = Math.max(200, panelH - 220);
+      setRows(pickAsciiRows(available));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  return (
+    <div ref={shellRef}>
+      <p className="text-sm text-ink-dim">
+        IBM PC Code Page 437 · {rows} per column · hover{" "}
+        <span className="font-mono text-amber">i</span> for details
+      </p>
+      <div className="mt-4 overflow-x-auto pb-2">
+        <div
+          className="grid gap-1.5 font-mono text-xs sm:gap-2 sm:text-sm"
+          style={{
+            gridAutoFlow: "column",
+            gridTemplateRows: `repeat(${rows}, minmax(0, auto))`,
+            gridAutoColumns: "minmax(8.25rem, 8.25rem)",
+          }}
+        >
+          {cells.map((entry) => {
+            const label = cp437TableDisplay(entry);
+            const isLabel = Boolean(entry.tableLabel) || entry.code === 0;
+            return (
+              <div
+                key={entry.code}
+                className="flex items-center gap-1.5 rounded border border-line/70 bg-panel-2/40 px-2 py-1.5 sm:px-2.5 sm:py-2"
+              >
+                <span className="min-w-[3ch] text-amber tabular-nums">
+                  {entry.code.toString().padStart(3, "0")}
+                </span>
+                <span
+                  className={`min-w-[3.5ch] flex-1 text-center ${
+                    isLabel
+                      ? "text-[10px] tracking-wide text-red uppercase sm:text-[11px]"
+                      : "text-ink"
+                  }`}
+                >
+                  {label}
+                </span>
+                <span className="text-[10px] text-ink-dim tabular-nums sm:text-[11px]">
+                  {entry.code.toString(16).padStart(2, "0").toUpperCase()}h
+                </span>
+                <AsciiInfoTip entry={entry} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -285,12 +420,16 @@ function NumberConverter() {
           <Row label="Hex" value={`0x${(n >>> 0).toString(16).toUpperCase()}`} />
           <Row label="Binary" value={(n >>> 0).toString(2)} />
           <Row
-            label="ASCII"
+            label="ASCII / CP437"
             value={
-              n >= 0 && n <= 127
-                ? ASCII_NAMES[n] !== undefined
-                  ? ASCII_NAMES[n]!
-                  : `'${String.fromCharCode(n)}'`
+              n >= 0 && n <= 255
+                ? (() => {
+                    const e = getCp437Entry(n >>> 0);
+                    const shown = cp437TableDisplay(e);
+                    return e.fullForm
+                      ? `${shown} (${e.meaning})`
+                      : `'${shown}'`;
+                  })()
                 : "—"
             }
           />

@@ -8,6 +8,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.2",
+    date: "2026-08-01",
+    highlights: [
+      "DOS console: independent LF (down) and CR (column 0) cursor motion, like emu8086",
+      "Console I/O uses IBM PC Code Page 437 glyphs (☺ ☻ box-drawing, etc.)",
+      "ASCII codes Help: 0–255 map, viewport-fit columns, fixed info cards",
+    ],
+  },
+  {
     version: "1.2.1",
     date: "2026-07-24",
     highlights: [

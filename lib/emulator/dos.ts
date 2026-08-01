@@ -15,6 +15,12 @@ export function handleInterrupt(
   return { handled: false };
 }
 
+function printMemBytes(ctx: DosContext, addr: number, count: number): void {
+  for (let i = 0; i < count; i++) {
+    ctx.printByte(ctx.mem[(addr + i) & 0xffff]!);
+  }
+}
+
 function handleInt21(ctx: DosContext): DosHandlerResult {
   const ah = ctx.get8("ah");
 
@@ -28,20 +34,21 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
         ctx.waitingForInput = true;
         return { handled: true, waitForInput: true };
       }
-      ctx.set8("al", ch.charCodeAt(0) & 0xff);
-      ctx.print(ch === "\r" ? "\n" : ch);
+      const code = ch.charCodeAt(0) & 0xff;
+      ctx.set8("al", code);
+      // Echo: CR → newline; other bytes via CP437 console mapping
+      if (ch === "\r" || ch === "\n") ctx.print("\n");
+      else ctx.printByte(code);
       return { handled: true };
     }
 
     case 0x02: {
-      const dl = ctx.get8("dl");
-      ctx.print(String.fromCharCode(dl));
+      ctx.printByte(ctx.get8("dl"));
       return { handled: true };
     }
 
     case 0x05: {
-      const dl = ctx.get8("dl");
-      ctx.print(String.fromCharCode(dl));
+      ctx.printByte(ctx.get8("dl"));
       return { handled: true };
     }
 
@@ -56,7 +63,7 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
         ctx.set8("al", ch.charCodeAt(0) & 0xff);
         return { handled: true };
       }
-      ctx.print(String.fromCharCode(dl));
+      ctx.printByte(dl);
       return { handled: true };
     }
 
@@ -73,12 +80,12 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
 
     case 0x09: {
       let addr = ctx.reg.dx & 0xffff;
-      let s = "";
-      while (ctx.mem[addr] !== 36 && s.length < 10_000) {
-        s += String.fromCharCode(ctx.mem[addr]);
+      let n = 0;
+      while (ctx.mem[addr] !== 36 && n < 10_000) {
+        ctx.printByte(ctx.mem[addr]!);
         addr = (addr + 1) & 0xffff;
+        n++;
       }
-      ctx.print(s);
       return { handled: true };
     }
 
@@ -200,11 +207,7 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
         ctx.reg.ax = 0;
         return { handled: true };
       }
-      let s = "";
-      for (let i = 0; i < count; i++) {
-        s += String.fromCharCode(ctx.mem[(addr + i) & 0xffff]);
-      }
-      ctx.print(s.replace(/\r\n|\r/g, "\n"));
+      printMemBytes(ctx, addr, count);
       ctx.reg.ax = count;
       return { handled: true };
     }
@@ -236,23 +239,18 @@ function handleInt10(ctx: DosContext): DosHandlerResult {
     case 0x0a: {
       const al = ctx.get8("al");
       const count = Math.max(1, ctx.reg.cx);
-      ctx.print(String.fromCharCode(al).repeat(count));
+      for (let i = 0; i < count; i++) ctx.printByte(al);
       return { handled: true };
     }
     case 0x0e: {
-      const al = ctx.get8("al");
-      ctx.print(String.fromCharCode(al));
+      ctx.printByte(ctx.get8("al"));
       return { handled: true };
     }
     case 0x13: {
       // Write string ES:BP, CX=length — flat: use BP as offset
       const addr = ctx.reg.bp & 0xffff;
       const len = ctx.reg.cx;
-      let s = "";
-      for (let i = 0; i < len; i++) {
-        s += String.fromCharCode(ctx.mem[(addr + i) & 0xffff]);
-      }
-      ctx.print(s);
+      printMemBytes(ctx, addr, len);
       return { handled: true };
     }
     default:

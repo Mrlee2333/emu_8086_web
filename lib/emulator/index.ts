@@ -17,6 +17,15 @@ export {
   decodeProgramFromShare,
 } from "./utils";
 export { FLAG_NAMES, INSTRUCTION_LIMIT } from "./constants";
+export {
+  CP437_CHARS,
+  cp437Char,
+  cp437TableDisplay,
+  dosByteToPrintable,
+  getAllCp437Entries,
+  getCp437Entry,
+} from "./cp437";
+export type { Cp437Entry } from "./cp437";
 export type {
   AssembledProgram,
   DataVariable,

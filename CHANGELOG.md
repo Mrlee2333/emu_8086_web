@@ -2,6 +2,24 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.2.2] — 2026-08-01
+
+### Fixed
+
+- DOS console treats `0Ah` (LF) and `0Dh` (CR) as independent cursor motions (LF = down, keep column; CR = column 0) — matching emu8086 / DOS, including overwrite and stair-step LF-only cases
+- ASCII codes info popover no longer clips off-screen at the bottom of a column
+
+### Added
+
+- IBM PC Code Page 437 glyph mapping for console output (classic DOS symbols through 255)
+- ASCII codes Help panel: full 0–255 map, viewport-fit columns (32 / 16 / 10 rows), horizontal scroll
+- Per-code info card (hover): glyph, abbrev badge, short description — fixed-position so it stays visible
+- Unit tests for CR/LF cursor semantics, triangle sample, and CP437 glyphs (`npm test`)
+
+### Changed
+
+- Number converter ASCII row reports CP437 through 255
+
 ## [1.2.1] — 2026-07-24
 
 ### Added

@@ -1,4 +1,6 @@
 import { REG8, REG8_TO_REG16, REG16 } from "./constants";
+import { dosByteToPrintable } from "./cp437";
+import { DosConsole } from "./dos-console";
 import { AsmError } from "./errors";
 import { handleInterrupt } from "./dos";
 import {
@@ -26,15 +28,19 @@ export class Machine {
   flags = createDefaultFlags();
   ip: number;
   halted = false;
-  output = "";
-  /** Tracks a bare CR so CRLF from DOS becomes a single newline. */
-  private pendingCR = false;
+  /** DOS text console (CR/LF are independent cursor motions). */
+  private console = new DosConsole();
   callStack: number[] = [];
   dataStack: number[] = [];
   steps = 0;
   err: string | null = null;
   inputQueue: string[] = [];
   waitingForInput = false;
+
+  /** Serialized console text for the CRT / clipboard. */
+  get output(): string {
+    return this.console.text;
+  }
 
   constructor(assembled: AssembledProgram) {
     this.a = assembled;
@@ -172,23 +178,13 @@ export class Machine {
     this.ip = this.a.labels[label];
   }
 
+  /** Emit a DOS console byte (INT 21h AH=02 style) with CP437 glyphs. */
+  printByte(byte: number): void {
+    this.print(dosByteToPrintable(byte));
+  }
+
   print(str: string): void {
-    for (const ch of str) {
-      if (ch === "\r") {
-        this.pendingCR = true;
-        continue;
-      }
-      if (ch === "\n") {
-        this.pendingCR = false;
-        this.output += "\n";
-        continue;
-      }
-      if (this.pendingCR) {
-        this.output += "\n";
-        this.pendingCR = false;
-      }
-      this.output += ch;
-    }
+    this.console.write(str);
   }
 
   enqueueInput(char: string): void {
@@ -892,6 +888,7 @@ export class Machine {
           reg: this.reg,
           mem: this.mem,
           print: (s: string) => this.print(s),
+          printByte: (b: number) => this.printByte(b),
           halt: () => {
             this.halted = true;
           },

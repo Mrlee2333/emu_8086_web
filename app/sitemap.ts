@@ -1,8 +1,8 @@
 import type { MetadataRoute } from "next";
 import { siteConfig } from "@/lib/seo";
 
-/** Stable release date for sitemap lastModified (1.2.1). */
-const RELEASE_DATE = new Date("2026-07-24");
+/** Stable release date for sitemap lastModified (1.2.2). */
+const RELEASE_DATE = new Date("2026-08-01");
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = siteConfig.url.replace(/\/$/, "");
