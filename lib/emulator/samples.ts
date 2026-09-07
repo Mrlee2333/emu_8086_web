@@ -429,6 +429,128 @@ outloop:
     ret
 print_ax endp
 end main`,
+
+  array: `.model small
+.stack 100h
+.data
+    array db 5, 3, 8, 1, 2
+    n     db 5
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+
+    mov cl, n
+    mov si, 0
+
+walk:
+    mov dl, array[si]
+    add dl, 30h
+    mov ah, 02h
+    int 21h
+
+    mov dl, ' '
+    int 21h
+
+    inc si
+    dec cl
+    jnz walk
+
+    mov ah, 4ch
+    int 21h
+main endp
+end main`,
+
+  printArray: `.model small
+.stack 100h
+.data
+    array db 5, 3, 8, 1, 2
+    n     db 5
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+
+    mov cl, n
+    lea si, array
+
+print_loop:
+    mov dl, [si]
+    add dl, 30h
+
+    mov ah, 02h
+    int 21h
+
+    mov dl, ' '
+    mov ah, 02h
+    int 21h
+
+    inc si
+    dec cl
+    jnz print_loop
+
+    mov ah, 4ch
+    int 21h
+main endp
+end main`,
+
+  sortArray: `.model small
+.stack 100h
+.data
+    array db 5, 3, 8, 1, 2
+    n     db 5
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+
+    mov cl, n
+    dec cl
+
+outer_loop:
+    mov ch, cl
+    lea si, array
+
+inner_loop:
+    mov al, [si]
+    mov bl, [si+1]
+
+    cmp al, bl
+    jbe no_swap
+
+    mov [si], bl
+    mov [si+1], al
+
+no_swap:
+    inc si
+    dec ch
+    jnz inner_loop
+
+    dec cl
+    jnz outer_loop
+
+    mov cl, n
+    lea si, array
+
+print_loop:
+    mov dl, [si]
+    add dl, 30h
+
+    mov ah, 02h
+    int 21h
+
+    mov dl, ' '
+    mov ah, 02h
+    int 21h
+
+    inc si
+    dec cl
+    jnz print_loop
+
+    mov ah, 4ch
+    int 21h
+main endp
+end main`,
 } as const;
 
 export type SampleKey = keyof typeof SAMPLES;
@@ -438,6 +560,9 @@ export const SAMPLE_OPTIONS: { key: SampleKey; label: string }[] = [
   { key: "add2", label: "Add two numbers" },
   { key: "multiply", label: "Multiply two numbers" },
   { key: "sum", label: "Sum an array" },
+  { key: "array", label: "Define an array" },
+  { key: "printArray", label: "Print an array" },
+  { key: "sortArray", label: "Sort an array" },
   { key: "loop", label: "Countdown loop" },
   { key: "largest", label: "Larger of two numbers" },
   { key: "swap", label: "Sort two numbers" },

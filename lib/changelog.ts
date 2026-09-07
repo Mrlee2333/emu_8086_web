@@ -8,6 +8,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.3",
+    date: "2026-09-07",
+    highlights: [
+      "Byte register + [SI] moves are 8-bit (array sort no longer fills with zeros)",
+      "INT 21h AH=01 Enter is CR (0Dh) and does not print an extra newline",
+      "Run continues across typed input so a full line can be entered without clicking Run again",
+      "Samples: define / print / sort a byte array",
+      "Package manager is Bun (bun.lock); npm is no longer used",
+    ],
+  },
+  {
     version: "1.2.2",
     date: "2026-08-01",
     highlights: [

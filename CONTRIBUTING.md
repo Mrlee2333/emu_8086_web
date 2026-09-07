@@ -4,9 +4,11 @@ Thanks for helping modernize 8086 assembly education for the browser.
 
 ## Development setup
 
+Requires [Bun](https://bun.sh) 1.4+.
+
 ```bash
-npm install
-npm run dev
+bun install
+bun dev
 ```
 
 Open http://localhost:3000 — the IDE loads at `/`.
@@ -15,11 +17,12 @@ Open http://localhost:3000 — the IDE loads at `/`.
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Local development |
-| `npm run lint` | ESLint |
-| `npm run typecheck` | TypeScript |
-| `npm run build` | Production build |
-| `npm run verify` | lint + typecheck + build |
+| `bun dev` | Local development |
+| `bun run lint` | ESLint |
+| `bun run typecheck` | TypeScript |
+| `bun test` | Emulator unit tests |
+| `bun run build` | Production build |
+| `bun run verify` | lint + typecheck + test + build |
 
 ## Project layout
 
@@ -35,7 +38,7 @@ Open http://localhost:3000 — the IDE loads at `/`.
 2. Prefer small, focused PRs (one concern each).
 3. Keep emulator logic in `lib/emulator/` — UI must not reimplement CPU rules.
 4. When adding an instruction or interrupt, update `docs/emulator.md`.
-5. Run `npm run verify` before opening a PR.
+5. Run `bun run verify` before opening a PR.
 6. Describe the **why** in the PR body and include a short test plan.
 
 ## Coding guidelines

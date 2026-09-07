@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Machine } from "@/lib/emulator/machine";
 import { hex4 } from "@/lib/emulator";
 import { flagsToWord } from "@/lib/emulator/flags";
@@ -15,6 +15,27 @@ interface ConsolePanelProps {
   theme?: "dark" | "light";
 }
 
+function sendConsoleKeys(
+  e: KeyboardEvent,
+  onInput: (chars: string) => void,
+): void {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    onInput("\r");
+    return;
+  }
+  if (e.key === "Backspace") {
+    e.preventDefault();
+    onInput("\b");
+    return;
+  }
+  if (e.key.length === 1) {
+    e.preventDefault();
+    onInput(e.key);
+  }
+}
+
 export function ConsolePanel({
   machine,
   waitingForInput,
@@ -23,6 +44,7 @@ export function ConsolePanel({
   theme = "dark",
 }: ConsolePanelProps) {
   const crtRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const output = machine?.output ?? "";
 
   useEffect(() => {
@@ -30,6 +52,12 @@ export function ConsolePanel({
       crtRef.current.scrollTop = crtRef.current.scrollHeight;
     }
   }, [output]);
+
+  useEffect(() => {
+    if (waitingForInput) {
+      inputRef.current?.focus();
+    }
+  }, [waitingForInput]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -50,6 +78,11 @@ export function ConsolePanel({
           ref={crtRef}
           className="crt h-full min-h-[100px] overflow-y-auto px-3 py-2.5 font-[family-name:var(--font-vt323)] text-[18px] leading-tight whitespace-pre-wrap text-[var(--console-fg)] sm:px-3.5 sm:py-3 sm:text-[19px]"
           style={{ textShadow: "var(--console-text-shadow)" }}
+          tabIndex={waitingForInput ? 0 : -1}
+          onKeyDown={(e) => {
+            if (!waitingForInput) return;
+            sendConsoleKeys(e, onInput);
+          }}
         >
           {output || (
             <span className="text-[var(--console-fg)] opacity-40">
@@ -63,23 +96,33 @@ export function ConsolePanel({
         ) : null}
       </div>
       {waitingForInput && (
-        <div className="mx-2 mb-2 flex items-center gap-2 sm:mx-3.5 sm:mb-3">
-          <label className="text-xs text-ink-dim">Input:</label>
-          <input
-            type="text"
-            className="flex-1 rounded border border-line bg-panel-2 px-2 py-1.5 font-mono text-sm text-ink outline-none focus:border-amber"
-            maxLength={1}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key.length === 1) {
-                onInput(e.key);
+        <div className="mx-2 mb-2 sm:mx-3.5 sm:mb-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-ink-dim" htmlFor="dos-keyboard">
+              Keyboard
+            </label>
+            <input
+              id="dos-keyboard"
+              ref={inputRef}
+              type="text"
+              autoComplete="off"
+              className="flex-1 rounded border border-line bg-panel-2 px-2 py-1.5 font-mono text-sm text-ink outline-none focus:border-amber"
+              placeholder="Type digits, then Enter"
+              autoFocus
+              onKeyDown={(e) => {
+                sendConsoleKeys(e, onInput);
                 (e.target as HTMLInputElement).value = "";
-              } else if (e.key === "Enter") {
-                onInput("\r");
-                (e.target as HTMLInputElement).value = "";
-              }
-            }}
-          />
+              }}
+              onPaste={(e) => {
+                e.preventDefault();
+                const text = e.clipboardData.getData("text");
+                if (text) onInput(text);
+              }}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-ink-dim">
+            Enter sends CR (0Dh) — your program prints its own newline.
+          </p>
         </div>
       )}
     </div>

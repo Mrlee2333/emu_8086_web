@@ -37,6 +37,8 @@ export function useEmulator(initialSource?: string) {
   const guardRef = useRef(0);
   const machineRef = useRef<Machine | null>(null);
   const breakpointsRef = useRef(breakpoints);
+  /** True after Run until Pause / halt / reset — survives INT 21h input waits. */
+  const keepRunningRef = useRef(false);
 
   useEffect(() => {
     machineRef.current = machine;
@@ -69,13 +71,18 @@ export function useEmulator(initialSource?: string) {
     return () => clearTimeout(timer);
   }, [source]);
 
-  const stopRun = useCallback(() => {
+  const stopTimer = useCallback(() => {
     if (runTimerRef.current) {
       clearInterval(runTimerRef.current);
       runTimerRef.current = null;
     }
     guardRef.current = 0;
   }, []);
+
+  const stopRun = useCallback(() => {
+    keepRunningRef.current = false;
+    stopTimer();
+  }, [stopTimer]);
 
   const doAssemble = useCallback(() => {
     stopRun();
@@ -133,7 +140,7 @@ export function useEmulator(initialSource?: string) {
     (m: Machine) => {
       if (m.err) setRunState("error");
       else if (m.halted) setRunState("halted");
-      else if (m.waitingForInput) setRunState("running");
+      else if (m.waitingForInput && keepRunningRef.current) setRunState("running");
       else setRunState("ready");
       refresh();
     },
@@ -149,14 +156,20 @@ export function useEmulator(initialSource?: string) {
 
   const runBatch = useCallback(() => {
     const m = machineRef.current;
-    if (!m || m.halted) {
+    if (!m || m.halted || m.err) {
       stopRun();
+      if (m) updateRunStateFromMachine(m);
       return;
     }
-    if (m.waitingForInput) return;
+    if (m.waitingForInput) {
+      stopTimer();
+      updateRunStateFromMachine(m);
+      return;
+    }
 
     let ok = true;
     for (let i = 0; i < 200 && ok; i++) {
+      if (m.waitingForInput) break;
       const line = m.getCurrentLine();
       if (line !== null && breakpointsRef.current.has(line)) {
         stopRun();
@@ -165,6 +178,7 @@ export function useEmulator(initialSource?: string) {
       }
       ok = m.step();
       guardRef.current++;
+      if (m.waitingForInput) break;
       if (guardRef.current > INSTRUCTION_LIMIT) {
         m.err = "Instruction limit exceeded (possible infinite loop).";
         m.halted = true;
@@ -172,17 +186,23 @@ export function useEmulator(initialSource?: string) {
       }
     }
     updateRunStateFromMachine(m);
-    if (!ok) stopRun();
-  }, [stopRun, updateRunStateFromMachine]);
+    if (m.waitingForInput) {
+      stopTimer();
+      return;
+    }
+    if (!ok || m.halted || m.err) stopRun();
+  }, [stopRun, stopTimer, updateRunStateFromMachine]);
 
   const doRun = useCallback(() => {
     const m = machineRef.current;
     if (!m || m.halted) return;
-    stopRun();
+    stopTimer();
+    keepRunningRef.current = true;
     setRunState("running");
     guardRef.current = 0;
     runTimerRef.current = setInterval(runBatch, runSpeed);
-  }, [runBatch, runSpeed, stopRun]);
+    runBatch();
+  }, [runBatch, runSpeed, stopTimer]);
 
   const doPause = useCallback(() => {
     stopRun();
@@ -222,17 +242,22 @@ export function useEmulator(initialSource?: string) {
   }, [source]);
 
   const provideInput = useCallback(
-    (char: string) => {
+    (chars: string) => {
       const m = machineRef.current;
-      if (!m) return;
-      m.enqueueInput(char);
+      if (!m || !chars) return;
+      m.enqueueInput(chars);
+      if (keepRunningRef.current) {
+        if (!runTimerRef.current) {
+          setRunState("running");
+          runTimerRef.current = setInterval(runBatch, runSpeed);
+        }
+        runBatch();
+        return;
+      }
       m.step();
       updateRunStateFromMachine(m);
-      if (runTimerRef.current && !m.halted && !m.waitingForInput) {
-        runBatch();
-      }
     },
-    [runBatch, updateRunStateFromMachine],
+    [runBatch, runSpeed, updateRunStateFromMachine],
   );
 
   useEffect(() => () => stopRun(), [stopRun]);

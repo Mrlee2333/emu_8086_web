@@ -2,7 +2,7 @@
 
 Browser-based 8086 assembler and step debugger. A modernization of classic emu8086 for every platform — write, assemble, and debug MASM-style assembly entirely in your browser.
 
-**Developed by [Nafis Islam Kabbo](https://nafiskabbo.vercel.app/)** · Version **1.2.2** · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
+**Developed by [Nafis Islam Kabbo](https://nafiskabbo.vercel.app/)** · Version **1.2.3** · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
 
 - Product: [https://emu-8086-web.vercel.app](https://emu-8086-web.vercel.app)
 - Portfolio: [https://nafiskabbo.vercel.app](https://nafiskabbo.vercel.app)
@@ -12,10 +12,12 @@ Browser-based 8086 assembler and step debugger. A modernization of classic emu80
 
 ## Quick start
 
+Requires [Bun](https://bun.sh) 1.4+.
+
 ```bash
-npm install
+bun install
 cp .env.example .env.local   # fill Supabase keys for share links
-npm run dev
+bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) — the IDE opens directly.
@@ -119,11 +121,12 @@ docs/emulator.md      Engine reference
 ## Scripts
 
 ```bash
-npm run dev        # Development server
-npm run build      # Production build
-npm run lint       # ESLint
-npm run typecheck  # TypeScript
-npm run verify     # lint + typecheck + build
+bun dev            # Development server
+bun run build      # Production build
+bun run lint       # ESLint
+bun run typecheck  # TypeScript
+bun test           # Emulator unit tests
+bun run verify     # lint + typecheck + test + build
 ```
 
 ## Contributing
@@ -133,6 +136,7 @@ This is an **open source** project. PRs welcome at [github.com/nafiskabbo/emu_80
 ## Tech stack
 
 - Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4
+- Bun for install, scripts, and tests
 - Emulator runs in the browser; Share API uses Supabase (optional until configured)
 
 ## Inspired by emu8086

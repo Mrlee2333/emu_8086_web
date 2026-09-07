@@ -4,6 +4,6 @@
 
 ## Test plan
 
-- [ ] `npm run verify` passes
+- [ ] `bun run verify` passes
 - [ ] Relevant samples still assemble and run
 - [ ] Docs updated if instructions/interrupts changed

@@ -93,7 +93,10 @@ Program terminate.
 - `0Ah` (LF) moves the cursor **down one row** and keeps the column.
 - `0Dh` (CR) moves the cursor to **column 0** without changing the row (can overwrite the line).
 - Together (`LF+CR` or `CR+LF`) they form a normal new line.
+- INT 21h AH=01 echoes the character as-is: Enter is CR only (not LF). Programs that `call newline` after a line of input print one new line.
 - `07h` BEL is silent; `08h` BS backs up one column; `09h` TAB expands to 8-column stops.
+
+Memory operand size follows an 8-bit or 16-bit register: `mov [si], bl` writes one byte. Use `byte ptr` / `word ptr` when both operands are memory or immediate.
 
 ## Extending
 

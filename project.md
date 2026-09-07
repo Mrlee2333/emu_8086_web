@@ -2,7 +2,7 @@
 
 A browser-based 8086 microprocessor assembler and step debugger — inspired by the classic emu8086 Windows application, rebuilt for the web by **Nafis Islam Kabbo**.
 
-**Version:** 1.2.2
+**Version:** 1.2.3
 
 ## Goals
 

@@ -1,6 +1,6 @@
 /**
  * DOS console CR/LF cursor semantics + CP437 mapping tests.
- * Run: npm test
+ * Run: bun test
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

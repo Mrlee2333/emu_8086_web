@@ -126,7 +126,7 @@ export class Machine {
     return token.includes("[") || this.a.dataVars[low] !== undefined;
   }
 
-  readOperand(token: string): number {
+  readOperand(token: string, sizeHint?: 1 | 2): number {
     token = token.trim();
     const low = token.toLowerCase();
     if (this.isReg8(low)) return this.get8(low);
@@ -142,14 +142,14 @@ export class Machine {
     if (this.isMemOperand(low)) {
       const addr = this.resolveMemOperand(token);
       if (addr === null) throw new AsmError(`Unknown operand "${token}"`);
-      const size = this.varUnitSize(token);
+      const size = sizeHint ?? this.varUnitSize(token);
       if (size === 2) return this.mem[addr] | (this.mem[addr + 1] << 8);
       return this.mem[addr];
     }
     throw new AsmError(`Cannot read operand "${token}"`);
   }
 
-  writeOperand(token: string, val: number): void {
+  writeOperand(token: string, val: number, sizeHint?: 1 | 2): void {
     token = token.trim();
     const low = token.toLowerCase();
     if (this.isReg8(low)) {
@@ -163,7 +163,7 @@ export class Machine {
     if (this.isMemOperand(low)) {
       const addr = this.resolveMemOperand(token);
       if (addr === null) throw new AsmError(`Unknown operand "${token}"`);
-      const size = this.varUnitSize(token);
+      const size = sizeHint ?? this.varUnitSize(token);
       writeUnit(this.mem, addr, val, size);
       return;
     }
@@ -187,8 +187,11 @@ export class Machine {
     this.console.write(str);
   }
 
-  enqueueInput(char: string): void {
-    this.inputQueue.push(char);
+  enqueueInput(text: string): void {
+    for (const ch of text) {
+      // Browser / paste newlines are LF; DOS keyboard Enter is CR (0Dh).
+      this.inputQueue.push(ch === "\n" ? "\r" : ch);
+    }
     this.waitingForInput = false;
   }
 
@@ -207,8 +210,23 @@ export class Machine {
     return m ? parseInt(m[1], 10) : this.getCurrentLine();
   }
 
-  operandSize(token: string): 1 | 2 {
-    return this.isReg8(token.toLowerCase()) ? 1 : 2;
+  /**
+   * 8086 size: an 8-bit register forces a byte op (`mov [si], bl`).
+   * Bare `[si]` without a register or BYTE/WORD PTR defaults to word.
+   */
+  operandSize(token: string, other?: string): 1 | 2 {
+    const low = token.toLowerCase();
+    if (this.isReg8(low)) return 1;
+    if (this.isReg16(low)) return 2;
+    if (other) {
+      const o = other.toLowerCase();
+      if (this.isReg8(o)) return 1;
+      if (this.isReg16(o)) return 2;
+    }
+    if (this.isMemOperand(low) || /^(byte|word)\s+ptr/i.test(token)) {
+      return this.varUnitSize(token);
+    }
+    return 2;
   }
 
   getCurrentLine(): number | null {
@@ -287,15 +305,17 @@ export class Machine {
 
     switch (op) {
       case "mov": {
-        const v = this.readOperand(args[1]);
-        this.writeOperand(args[0], v);
+        const size = this.operandSize(args[0], args[1]);
+        const v = this.readOperand(args[1], size);
+        this.writeOperand(args[0], v, size);
         break;
       }
       case "xchg": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        this.writeOperand(args[0], b);
-        this.writeOperand(args[1], a);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
+        this.writeOperand(args[0], b, size);
+        this.writeOperand(args[1], a, size);
         break;
       }
       case "lea": {
@@ -305,58 +325,59 @@ export class Machine {
         break;
       }
       case "add": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a + b;
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         setFlagsAfterOp(this.flags, r, size, "add", a, b);
         break;
       }
       case "sub": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a - b;
-        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff));
+        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
         setFlagsAfterOp(this.flags, r, size, "sub", a, b);
         break;
       }
       case "cmp": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a - b;
         setFlagsAfterOp(this.flags, r, size, "cmp", a, b);
         break;
       }
       case "test": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a & b;
         setLogicFlags(this.flags, r, size);
         break;
       }
       case "inc": {
-        const a = this.readOperand(args[0]);
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
         const r = a + 1;
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         setFlagsAfterOp(this.flags, r, size, "add", a, 1);
         break;
       }
       case "dec": {
-        const a = this.readOperand(args[0]);
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
         const r = a - 1;
-        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff));
+        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
         setFlagsAfterOp(this.flags, r, size, "sub", a, 1);
         break;
       }
       case "mul": {
-        const b = this.readOperand(args[0]);
-        const isByte = this.isReg8(args[0].toLowerCase());
+        const size = this.operandSize(args[0]);
+        const b = this.readOperand(args[0], size);
+        const isByte = size === 1;
         if (isByte) {
           const r = this.get8("al") * b;
           this.reg.ax = r & 0xffff;
@@ -377,9 +398,10 @@ export class Machine {
         break;
       }
       case "div": {
-        const b = this.readOperand(args[0]);
+        const size = this.operandSize(args[0]);
+        const b = this.readOperand(args[0], size);
         if (b === 0) throw new AsmError("Division by zero");
-        const isByte = this.isReg8(args[0].toLowerCase());
+        const isByte = size === 1;
         if (isByte) {
           const dividend = this.reg.ax;
           this.set8("al", Math.floor(dividend / b));
@@ -392,66 +414,70 @@ export class Machine {
         break;
       }
       case "and": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a & b;
-        this.writeOperand(args[0], r);
-        setLogicFlags(this.flags, r, this.operandSize(args[0]));
+        this.writeOperand(args[0], r, size);
+        setLogicFlags(this.flags, r, size);
         break;
       }
       case "or": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a | b;
-        this.writeOperand(args[0], r);
-        setLogicFlags(this.flags, r, this.operandSize(args[0]));
+        this.writeOperand(args[0], r, size);
+        setLogicFlags(this.flags, r, size);
         break;
       }
       case "xor": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a ^ b;
-        this.writeOperand(args[0], r);
-        setLogicFlags(this.flags, r, this.operandSize(args[0]));
+        this.writeOperand(args[0], r, size);
+        setLogicFlags(this.flags, r, size);
         break;
       }
       case "not": {
-        const a = this.readOperand(args[0]);
         const size = this.operandSize(args[0]);
-        this.writeOperand(args[0], ~a & (size === 2 ? 0xffff : 0xff));
+        const a = this.readOperand(args[0], size);
+        this.writeOperand(args[0], ~a & (size === 2 ? 0xffff : 0xff), size);
         break;
       }
       case "neg": {
-        const a = this.readOperand(args[0]);
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
         const r = (-a) & (size === 2 ? 0xffff : 0xff);
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         this.flags.ZF = r === 0 ? 1 : 0;
         this.flags.CF = a !== 0 ? 1 : 0;
         break;
       }
       case "adc": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a + b + this.flags.CF;
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         setFlagsAfterOp(this.flags, r, size, "add", a, b + this.flags.CF);
         break;
       }
       case "sbb": {
-        const a = this.readOperand(args[0]);
-        const b = this.readOperand(args[1]);
-        const size = this.operandSize(args[0]);
+        const size = this.operandSize(args[0], args[1]);
+        const a = this.readOperand(args[0], size);
+        const b = this.readOperand(args[1], size);
         const r = a - b - this.flags.CF;
-        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff));
+        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
         setFlagsAfterOp(this.flags, r, size, "sub", a, b + this.flags.CF);
         break;
       }
       case "idiv": {
-        const b = this.readOperand(args[0]);
+        const size = this.operandSize(args[0]);
+        const b = this.readOperand(args[0], size);
         if (b === 0) throw new AsmError("Division by zero");
-        const isByte = this.isReg8(args[0].toLowerCase());
+        const isByte = size === 1;
         if (isByte) {
           const dividend = (this.reg.ax << 16) >> 16;
           this.set8("al", Math.trunc(dividend / b) & 0xff);
@@ -467,52 +493,52 @@ export class Machine {
       }
       case "sal":
       case "shl": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const mask = size === 2 ? 0xffff : 0xff;
         const r = (a << n) & mask;
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         if (n > 0) this.flags.CF = (a >> (size * 8 - n)) & 1;
         setLogicFlags(this.flags, r, size);
         break;
       }
       case "sar": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const bits = size * 8;
         const signed = (a << (32 - bits)) >> (32 - bits);
         const r = (signed >> n) & (size === 2 ? 0xffff : 0xff);
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         if (n > 0) this.flags.CF = (signed >> (n - 1)) & 1;
         setLogicFlags(this.flags, r, size);
         break;
       }
       case "rol": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const bits = size * 8;
         const r = ((a << n) | (a >> (bits - n))) & (size === 2 ? 0xffff : 0xff);
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         if (n > 0) this.flags.CF = r & 1;
         break;
       }
       case "ror": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const bits = size * 8;
         const r = ((a >> n) | (a << (bits - n))) & (size === 2 ? 0xffff : 0xff);
-        this.writeOperand(args[0], r);
+        this.writeOperand(args[0], r, size);
         if (n > 0) this.flags.CF = (r >> (bits - 1)) & 1;
         break;
       }
       case "rcl": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const bits = size * 8;
         let val = a;
         let cf = this.flags.CF;
@@ -521,14 +547,14 @@ export class Machine {
           val = ((val << 1) | cf) & (size === 2 ? 0xffff : 0xff);
           cf = newCf;
         }
-        this.writeOperand(args[0], val);
+        this.writeOperand(args[0], val, size);
         this.flags.CF = cf;
         break;
       }
       case "rcr": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const bits = size * 8;
         let val = a;
         let cf = this.flags.CF;
@@ -537,16 +563,16 @@ export class Machine {
           val = ((cf << (bits - 1)) | (val >> 1)) & (size === 2 ? 0xffff : 0xff);
           cf = newCf;
         }
-        this.writeOperand(args[0], val);
+        this.writeOperand(args[0], val, size);
         this.flags.CF = cf;
         break;
       }
       case "shr": {
-        const a = this.readOperand(args[0]);
-        const n = this.readOperand(args[1]) & 0x1f;
         const size = this.operandSize(args[0]);
+        const a = this.readOperand(args[0], size);
+        const n = this.readOperand(args[1]) & 0x1f;
         const r = a >>> n;
-        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff));
+        this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
         if (n > 0) this.flags.CF = (a >> (n - 1)) & 1;
         setLogicFlags(this.flags, r, size);
         break;

@@ -34,11 +34,11 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
         ctx.waitingForInput = true;
         return { handled: true, waitForInput: true };
       }
+      // DOS keyboard Enter is CR (0Dh). Echo the real byte: CR moves to
+      // column 0 and does not start a new line (programs print their own LF).
       const code = ch.charCodeAt(0) & 0xff;
       ctx.set8("al", code);
-      // Echo: CR → newline; other bytes via CP437 console mapping
-      if (ch === "\r" || ch === "\n") ctx.print("\n");
-      else ctx.printByte(code);
+      ctx.printByte(code);
       return { handled: true };
     }
 
@@ -111,7 +111,7 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
         count++;
       }
       ctx.mem[bufferAddr + 1] = count;
-      ctx.print("\n");
+      ctx.print("\r\n");
       return { handled: true };
     }
 

@@ -2,6 +2,23 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.2.3] — 2026-09-07
+
+### Fixed
+
+- `mov [si], bl` / `mov al, [si]` are byte operations when one operand is an 8-bit register (bare `[si]` was treated as a word, which zeroed the next array element during bubble sort)
+- INT 21h AH=01 echoes Enter as CR (`0Dh`) — cursor to column 0 — instead of a line feed, so a following `newline` proc is a single new line
+- Run no longer stops at each character of INT 21h input; type a full number and press Enter without clicking Run again
+
+### Added
+
+- Sample programs: define an array, print an array, sort an array
+- Console keyboard accepts a line / paste; Enter sends CR as the end-of-input character
+
+### Changed
+
+- Package manager is **Bun** (`bun.lock`, `bun install` / `bun run …`). `package-lock.json` is gone.
+
 ## [1.2.2] — 2026-08-01
 
 ### Fixed
