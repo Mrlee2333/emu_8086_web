@@ -2,6 +2,12 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.2.4] — 2026-09-08
+
+### Fixed
+
+- Assembler accepts continuation `db` / `dw` lines without a label (MASM-style multi-line arrays, e.g. 2D byte matrices)
+
 ## [1.2.3] — 2026-09-07
 
 ### Fixed

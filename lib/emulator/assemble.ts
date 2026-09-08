@@ -20,6 +20,7 @@ export function assemble(src: string): AssembledProgram {
   const labels: Record<string, number> = {};
   let section: "data" | "code" | null = null;
   let entryLabel: string | null = null;
+  let lastDataVar: string | null = null;
 
   const cleaned: { text: string; ln: number }[] = [];
   for (let ln = 0; ln < rawLines.length; ln++) {
@@ -48,9 +49,17 @@ export function assemble(src: string): AssembledProgram {
     }
 
     if (section === "data") {
-      parseDataLine(text, ln, mem, dataVars, () => dataPtr, (v) => {
-        dataPtr = v;
-      });
+      lastDataVar = parseDataLine(
+        text,
+        ln,
+        mem,
+        dataVars,
+        () => dataPtr,
+        (v) => {
+          dataPtr = v;
+        },
+        lastDataVar,
+      );
       continue;
     }
 
@@ -74,15 +83,34 @@ function parseDataLine(
   dataVars: AssembledProgram["dataVars"],
   getPtr: () => number,
   setPtr: (v: number) => void,
-): void {
-  const m = text.match(/^(\w+)\s+(db|dw)\s+(.*)$/i);
-  if (!m) throw new AsmError(`Cannot parse data declaration: "${text}"`, ln);
+  lastDataVar: string | null,
+): string {
+  const withLabel = text.match(/^(\w+)\s+(db|dw)\s+(.*)$/i);
+  const continuation = !withLabel ? text.match(/^(db|dw)\s+(.*)$/i) : null;
 
-  const name = m[1].toLowerCase();
-  const kind = m[2].toLowerCase();
-  const rest = m[3];
+  if (!withLabel && !continuation) {
+    throw new AsmError(`Cannot parse data declaration: "${text}"`, ln);
+  }
+  if (continuation && !lastDataVar) {
+    throw new AsmError(`Cannot parse data declaration: "${text}"`, ln);
+  }
+
+  const name = withLabel ? withLabel[1].toLowerCase() : lastDataVar!;
+  const kind = (withLabel ? withLabel[2] : continuation![1]).toLowerCase();
+  const rest = withLabel ? withLabel[3] : continuation![2];
   const unitSize = kind === "dw" ? 2 : 1;
-  const addr = getPtr();
+
+  if (continuation) {
+    const prev = dataVars[name];
+    if (prev.unitSize !== unitSize) {
+      throw new AsmError(
+        `Data type mismatch on continuation line (expected ${prev.unitSize === 2 ? "dw" : "db"})`,
+        ln,
+      );
+    }
+  }
+
+  const addr = withLabel ? getPtr() : dataVars[name].addr;
   let count = 0;
   let dataPtr = getPtr();
 
@@ -125,7 +153,14 @@ function parseDataLine(
   }
 
   setPtr(dataPtr);
-  dataVars[name] = { addr, unitSize: unitSize as 1 | 2, count };
+
+  if (withLabel) {
+    dataVars[name] = { addr, unitSize: unitSize as 1 | 2, count };
+  } else {
+    dataVars[name].count += count;
+  }
+
+  return name;
 }
 
 function parseCodeLine(

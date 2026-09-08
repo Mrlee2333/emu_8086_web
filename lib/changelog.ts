@@ -8,6 +8,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.4",
+    date: "2026-09-08",
+    highlights: [
+      "Assembler accepts continuation DB/DW lines without a label (multi-line 2D byte arrays)",
+    ],
+  },
+  {
     version: "1.2.3",
     date: "2026-09-07",
     highlights: [
