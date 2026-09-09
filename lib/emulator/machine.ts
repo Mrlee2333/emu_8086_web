@@ -89,25 +89,34 @@ export class Machine {
 
   resolveMemOperand(token: string): number | null {
     const t = token.replace(/^(byte|word)\s+ptr\s+/i, "").trim();
-    const m = t.match(/^(\w+)?\s*\[\s*([^\]]+)\s*\]$/i);
-    if (m) {
-      const base = m[1] ? m[1].toLowerCase() : null;
-      const offsetExpr = m[2].trim();
-      let addr = 0;
-      if (base && this.a.dataVars[base]) addr += this.a.dataVars[base].addr;
-      const parts = offsetExpr.split("+").map((p) => p.trim());
-      for (const p of parts) {
+    const firstBracket = t.indexOf("[");
+    if (firstBracket === -1) {
+      const name = t.toLowerCase();
+      if (this.a.dataVars[name]) return this.a.dataVars[name].addr;
+      return null;
+    }
+
+    const base = t.slice(0, firstBracket).trim().toLowerCase() || null;
+    const bracketRe = /\[\s*([^\]]+)\s*\]/g;
+    const brackets: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = bracketRe.exec(t)) !== null) {
+      brackets.push(m[1].trim());
+    }
+    if (brackets.length === 0) return null;
+
+    let addr = 0;
+    if (base && this.a.dataVars[base]) addr += this.a.dataVars[base].addr;
+    for (const offsetExpr of brackets) {
+      for (const p of offsetExpr.split("+").map((x) => x.trim())) {
         if (this.isReg16(p)) addr += this.reg[p];
         else {
           const n = parseNumber(p);
           if (n !== null) addr += n;
         }
       }
-      return addr;
     }
-    const name = t.toLowerCase();
-    if (this.a.dataVars[name]) return this.a.dataVars[name].addr;
-    return null;
+    return addr;
   }
 
   varUnitSize(token: string): 1 | 2 {

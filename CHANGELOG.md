@@ -2,6 +2,12 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.2.5] — 2026-09-09
+
+### Added
+
+- Assembler/emulator supports MASM-style 2D array indexing: `mark[bx][si]` (equivalent to `mark[bx+si]`)
+
 ## [1.2.4] — 2026-09-08
 
 ### Fixed

@@ -70,6 +70,65 @@ end main
   });
 });
 
+describe("2D array memory ops with [bx][si]", () => {
+  it("reads mark[bx][si] as mark + bx + si", () => {
+    const out = runSource(`.model small
+.stack 100h
+.data
+    mark db 10, 20, 15, 11, 0, 0, 0, 0
+         db 12, 15, 16, 18, 0, 0, 0, 0
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+    mov bx, 8
+    mov si, 2
+    mov al, mark[bx][si]
+    add al, 30h
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    mov ah, 4ch
+    int 21h
+main endp
+end main
+`);
+    assert.equal(out, "@");
+  });
+
+  it("writes mark[bx][si] without disturbing neighboring cells", () => {
+    const out = runSource(`.model small
+.stack 100h
+.data
+    mark db 10, 20, 15, 11, 0, 0, 0, 0
+         db 12, 15, 16, 18, 0, 0, 0, 0
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+    mov bx, 0
+    mov si, 1
+    mov dl, 25
+    mov mark[bx][si], dl
+    mov cl, 4
+    mov si, 0
+print_loop:
+    mov dl, mark[bx][si]
+    add dl, 30h
+    mov ah, 02h
+    int 21h
+    inc si
+    dec cl
+    jnz print_loop
+    mov ah, 4ch
+    int 21h
+main endp
+end main
+`);
+    assert.equal(out, ":I?;");
+  });
+});
+
 describe("INT 21h AH=01 Enter is CR, not a newline", () => {
   const src = `.model small
 .stack 100h

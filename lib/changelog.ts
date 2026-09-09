@@ -8,6 +8,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.5",
+    date: "2026-09-09",
+    highlights: [
+      "MASM-style 2D array indexing: mark[bx][si] (same effective address as mark[bx+si])",
+    ],
+  },
+  {
     version: "1.2.4",
     date: "2026-09-08",
     highlights: [

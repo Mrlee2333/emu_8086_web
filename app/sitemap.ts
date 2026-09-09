@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { siteConfig } from "@/lib/seo";
 
-/** Stable release date for sitemap lastModified (1.2.4). */
+/** Stable release date for sitemap lastModified (1.2.5). */
 const RELEASE_DATE = new Date("2026-09-08");
 
 export default function sitemap(): MetadataRoute.Sitemap {
