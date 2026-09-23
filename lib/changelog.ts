@@ -8,6 +8,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.3.1",
+    date: "2026-09-23",
+    highlights: [
+      "Step Back time-travel: undo Single Step / Run bursts (Shift+F8), restores registers, flags, memory, console",
+      "Toolbar renamed Step → Single Step with icon + text buttons (Compile, Run, Pause, Reset, theme)",
+      "Compact File menu (hover to open): Open, Save, Save as, Share",
+      "Help menu opens on hover as well as click",
+      "Native desktop menu: Single Step + Step Back entries",
+    ],
+  },
+  {
     version: "1.3.0",
     date: "2026-09-23",
     highlights: [

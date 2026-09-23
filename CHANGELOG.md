@@ -2,6 +2,16 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.3.1] — 2026-09-23
+
+### Added
+
+- Step Back time-travel in the top bar: undo Single Step / Run bursts (Shift+F8), restoring registers, flags, memory, and console output (up to 512 checkpoints)
+- Top bar uses icon + text buttons: Compile, Run / Pause, Single Step (renamed from Step), Step Back, Reset, theme toggle
+- Compact File menu (hover or click to open): Open…, Save (Ctrl+S), Save as…, Share…
+- Help menu opens on hover as well as click
+- Native desktop menu (Electron): Single Step + Step Back entries wired to the IDE
+
 ## [1.3.0] — 2026-09-23
 
 ### Added

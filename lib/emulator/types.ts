@@ -76,6 +76,22 @@ export interface MachineSnapshot {
   waitingForInput: boolean;
 }
 
+/** Full reversible CPU state for Step Back (snapshot + memory + console). */
+export interface FullMachineState {
+  reg: Registers;
+  flags: Flags;
+  ip: number;
+  halted: boolean;
+  callStack: number[];
+  dataStack: number[];
+  steps: number;
+  err: string | null;
+  inputQueue: string[];
+  waitingForInput: boolean;
+  mem: Uint8Array;
+  console: { lines: string[]; row: number; col: number };
+}
+
 export interface DosContext {
   get8: (reg: Reg8Name) => number;
   set8: (reg: Reg8Name, val: number) => void;

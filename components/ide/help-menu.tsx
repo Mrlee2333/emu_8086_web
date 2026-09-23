@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { AdSenseUnit, AD_SLOTS } from "@/components/ads/adsense-unit";
 import { AuthorContacts } from "@/components/ide/author-contacts";
 import { DialogShell } from "@/components/ide/dialog-shell";
-import { IconGitHub } from "@/components/ide/editor-icons";
+import { IconGitHub, IconHelp } from "@/components/ide/editor-icons";
 import { ShortcutsHelp } from "@/components/ide/shortcuts-help";
 import { CHANGELOG } from "@/lib/changelog";
 import {
@@ -71,6 +71,28 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
   const [osView, setOsView] = useState<OsView>("auto");
   const [overrides, setOverrides] = useState<OverrideMap>({});
   const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+
+  const openMenu = () => {
+    cancelClose();
+    reloadShortcutPrefs();
+    setPanel("menu");
+  };
+
+  const scheduleClose = () => {
+    cancelClose();
+    // Small delay keeps hover usable when moving from button to menu.
+    closeTimer.current = setTimeout(() => setPanel(null), 120);
+  };
+
+  useEffect(() => () => cancelClose(), []);
 
   const reloadShortcutPrefs = () => {
     setScheme(loadScheme());
@@ -113,21 +135,32 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
   const meta = dialogPanel ? PANEL_META[dialogPanel] : null;
 
   return (
-    <div ref={rootRef} className="relative">
+    <div
+      ref={rootRef}
+      className="relative"
+      onMouseEnter={openMenu}
+      onMouseLeave={scheduleClose}
+    >
       <button
         type="button"
-        className="btn"
+        className="btn inline-flex items-center gap-1.5"
         onClick={() => {
-          if (!panel) reloadShortcutPrefs();
-          setPanel((p) => (p ? null : "menu"));
+          if (panel === "menu") setPanel(null);
+          else openMenu();
         }}
+        aria-expanded={panel === "menu"}
+        aria-haspopup="menu"
         title="Help"
       >
-        Help
+        <IconHelp />
+        <span>Help</span>
       </button>
 
       {panel === "menu" && (
-        <div className="absolute top-full right-0 z-40 mt-1 min-w-[260px] border border-line bg-panel py-1 shadow-xl">
+        <div
+          role="menu"
+          className="absolute top-full right-0 z-40 mt-1 min-w-[260px] border border-line bg-panel py-1 shadow-xl"
+        >
           {MENU_ITEMS.map(({ id, label, shortcutId }) => {
             const chord = shortcutId
               ? formatShortcutLabel(shortcutId, scheme, osView, overrides)

@@ -17,6 +17,7 @@ export type Chord = {
 export type ShortcutId =
   | "assemble"
   | "step"
+  | "stepBack"
   | "pause"
   | "save"
   | "shortcuts"
@@ -65,6 +66,18 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
     action: "Single step",
     intellij: { mac: k("F8"), win: k("F8") },
     vscode: { mac: k("F8"), win: k("F8") },
+  },
+  {
+    id: "stepBack",
+    action: "Step back",
+    intellij: {
+      mac: k("F8", { shift: true }),
+      win: k("F8", { shift: true }),
+    },
+    vscode: {
+      mac: k("F8", { shift: true }),
+      win: k("F8", { shift: true }),
+    },
   },
   {
     id: "pause",

@@ -12,6 +12,7 @@ import {
 } from "./flags";
 import type {
   AssembledProgram,
+  FullMachineState,
   Instruction,
   MachineSnapshot,
   Reg16Name,
@@ -258,6 +259,39 @@ export class Machine {
       inputQueue: [...this.inputQueue],
       waitingForInput: this.waitingForInput,
     };
+  }
+
+  /** Full reversible state for Step Back (registers + flags + memory + console). */
+  capture(): FullMachineState {
+    return {
+      reg: { ...this.reg },
+      flags: { ...this.flags },
+      ip: this.ip,
+      halted: this.halted,
+      callStack: [...this.callStack],
+      dataStack: [...this.dataStack],
+      steps: this.steps,
+      err: this.err,
+      inputQueue: [...this.inputQueue],
+      waitingForInput: this.waitingForInput,
+      mem: new Uint8Array(this.mem),
+      console: this.console.getState(),
+    };
+  }
+
+  restore(s: FullMachineState): void {
+    this.reg = { ...s.reg };
+    this.flags = { ...s.flags };
+    this.ip = s.ip;
+    this.halted = s.halted;
+    this.callStack = [...s.callStack];
+    this.dataStack = [...s.dataStack];
+    this.steps = s.steps;
+    this.err = s.err;
+    this.inputQueue = [...s.inputQueue];
+    this.waitingForInput = s.waitingForInput;
+    this.mem.set(s.mem);
+    this.console.setState(s.console);
   }
 
   /** Execute one instruction. Returns false when halted or errored. */
