@@ -82,6 +82,9 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
 
   const openMenu = () => {
     cancelClose();
+    // Don't dismiss an open help dialog (ascii/convert/…) when the
+    // pointer merely passes over the Help button.
+    if (panel !== null && panel !== "menu") return;
     reloadShortcutPrefs();
     setPanel("menu");
   };
@@ -145,8 +148,12 @@ export function HelpMenu({ onOpenSettings }: HelpMenuProps) {
         type="button"
         className="btn inline-flex items-center gap-1.5"
         onClick={() => {
-          if (panel === "menu") setPanel(null);
-          else openMenu();
+          // Clicking always leaves the menu/dialog (unlike hover).
+          cancelClose();
+          if (panel !== null) {
+            if (panel !== "menu") reloadShortcutPrefs();
+            setPanel(panel === "menu" ? null : "menu");
+          } else openMenu();
         }}
         aria-expanded={panel === "menu"}
         aria-haspopup="menu"

@@ -7,6 +7,12 @@
  */
 
 export class DosConsole {
+  /**
+   * Oldest lines are dropped past this count so a runaway print loop
+   * (up to the 2M instruction limit) cannot grow memory / freeze render.
+   */
+  static readonly MAX_LINES = 2000;
+
   private lines: string[] = [""];
   private row = 0;
   private col = 0;
@@ -69,6 +75,12 @@ export class DosConsole {
 
   private ensureRow(r: number): void {
     while (this.lines.length <= r) this.lines.push("");
+    // Trim oldest rows (a print loop can emit thousands of lines).
+    if (this.lines.length > DosConsole.MAX_LINES) {
+      const drop = this.lines.length - DosConsole.MAX_LINES;
+      this.lines.splice(0, drop);
+      this.row = Math.max(0, this.row - drop);
+    }
   }
 
   private putChar(ch: string): void {

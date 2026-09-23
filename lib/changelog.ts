@@ -8,6 +8,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.3.2",
+    date: "2026-09-23",
+    highlights: [
+      "Watch panel: pin registers, variables, memory operands; live values while stepping (persisted)",
+      "Memory dump: find bytes (hex or text) with match count + wrap, goto address (1A2Bh / 0x1A2B / decimal)",
+      "Open-file size cap (256 KiB) with skipped-file notice",
+      "Filename sanitization: traversal, separators, control chars stripped",
+      "Console output capped at 2000 lines so print loops can't freeze the tab",
+      "Help hover no longer dismisses an open help dialog",
+    ],
+  },
+  {
     version: "1.3.1",
     date: "2026-09-23",
     highlights: [
