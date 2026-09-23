@@ -2,6 +2,20 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.3.2] — 2026-09-23
+
+### Added
+
+- Watch panel (right column): pin expressions like `ax`, `count`, `[si]`, `byte ptr [bx]` — hex + decimal + signed values update live while stepping / stepping back; list persists in localStorage
+- Memory dump: find bytes by hex (`48 65`, `0x48`) or text (`Hi`, `'Hi'`) with match count, Find / Next with wrap-around; Goto address accepts `1A2Bh`, `0x1A2B`, or decimal
+
+### Fixed
+
+- Open-file size cap (256 KiB per file): oversized files are skipped with a notice instead of freezing assemble
+- Filename sanitization at the single choke point (`ensureAsmExtension`): path separators, `..`, null bytes, and control chars stripped; over-long names truncated; Unicode preserved
+- Console output capped at the newest 2000 lines so runaway print loops (up to the 2M instruction limit) can't grow memory or freeze rendering
+- Help hover no longer dismisses an open help dialog; click still navigates back to the menu
+
 ## [1.3.1] — 2026-09-23
 
 ### Added

@@ -22,6 +22,7 @@ import { ResizeHandle } from "@/components/ide/resize-panels";
 import { SettingsModal } from "@/components/ide/settings-modal";
 import { ShareDialog } from "@/components/ide/share-dialog";
 import { Toolbar } from "@/components/ide/toolbar";
+import { WatchPanel } from "@/components/ide/watch-panel";
 import { WebMcpBootstrap } from "@/components/ide/webmcp-bootstrap";
 import { useEmulator } from "@/lib/ide/use-emulator";
 import { isAdsEnabled } from "@/lib/adsense";
@@ -39,7 +40,9 @@ import {
   createDefaultFile,
   createFileId,
   ensureAsmExtension,
+  isOpenableSize,
   loadFilesFromStorage,
+  MAX_OPEN_FILE_BYTES,
   saveFilesToStorage,
   type WorkspaceFile,
 } from "@/lib/ide/workspace-files";
@@ -281,7 +284,22 @@ export function IdeWorkspace() {
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
     if (!list?.length) return;
-    const readers = Array.from(list).map(
+    const picked = Array.from(list);
+    const skipped = picked.filter((f) => !isOpenableSize(f.size));
+    const accepted = picked.filter((f) => isOpenableSize(f.size));
+    if (skipped.length > 0) {
+      showToast(
+        `Skipped ${skipped.length} file(s) over ${Math.round(MAX_OPEN_FILE_BYTES / 1024)} KiB: ${skipped
+          .slice(0, 3)
+          .map((f) => f.name)
+          .join(", ")}${skipped.length > 3 ? "…" : ""}`,
+      );
+    }
+    if (accepted.length === 0) {
+      e.target.value = "";
+      return;
+    }
+    const readers = accepted.map(
       (file) =>
         new Promise<WorkspaceFile>((resolve) => {
           const reader = new FileReader();
@@ -750,6 +768,7 @@ export function IdeWorkspace() {
             <RegisterPanel machine={machine} />
             <FlagsPanel machine={machine} />
             <StatusLine machine={machine} />
+            <WatchPanel machine={machine} />
             <DataSegmentPanel
               assembled={assembled}
               machine={machine}

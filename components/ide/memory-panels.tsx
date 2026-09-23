@@ -1,8 +1,14 @@
 "use client";
 
+import { useRef, useState } from "react";
 import type { AssembledProgram } from "@/lib/emulator";
 import type { Machine } from "@/lib/emulator/machine";
 import { hex2, hex4 } from "@/lib/emulator";
+import {
+  countMatches,
+  findNextMatch,
+  parseSearchPattern,
+} from "@/lib/ide/memory-search";
 
 interface MemoryPanelsProps {
   assembled: AssembledProgram | null;
@@ -81,23 +87,122 @@ export function HexDumpPanel({
   const mem = machine?.mem;
   const rows = 8;
   const cols = 16;
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const lastMatch = useRef(-1);
+
+  const jumpTo = (addr: number) => {
+    lastMatch.current = addr;
+    onHexBaseChange(addr & 0xfff0);
+  };
+
+  const runSearch = (from: number, allowWrap: boolean) => {
+    if (!mem) {
+      setStatus("Assemble first");
+      return;
+    }
+    const pattern = parseSearchPattern(query);
+    if (!pattern) {
+      setStatus("Enter hex bytes (48 65) or text");
+      return;
+    }
+    let hit = findNextMatch(mem, pattern, from);
+    let wrapped = false;
+    if (hit < 0 && allowWrap && from > 0) {
+      hit = findNextMatch(mem, pattern, 0);
+      wrapped = hit >= 0;
+    }
+    if (hit < 0) {
+      lastMatch.current = -1;
+      setStatus("Not found");
+      return;
+    }
+    jumpTo(hit);
+    const total = countMatches(mem, pattern);
+    setStatus(
+      `0x${hit.toString(16).padStart(4, "0").toUpperCase()} · ${total} match${total === 1 ? "" : "es"}${wrapped ? " · wrapped" : ""}`,
+    );
+  };
+
+  const gotoAddress = (raw: string) => {
+    const t = raw.trim().toLowerCase();
+    if (!t) return;
+    // Reuse assembler number styles: 1A2Bh, 0x1A2B, binary, decimal.
+    let v: number | null = null;
+    if (/^0x[0-9a-f]+$/i.test(t)) v = parseInt(t, 16);
+    else if (/^[0-9a-f]+h$/i.test(t)) v = parseInt(t.slice(0, -1), 16);
+    else if (/^[01]+b$/i.test(t)) v = parseInt(t.slice(0, -1), 2);
+    else if (/^[0-9]+$/i.test(t)) v = parseInt(t, 10);
+    if (v === null || Number.isNaN(v)) {
+      setStatus("Bad address — try 1A2Bh, 0x1A2B, or 6699");
+      return;
+    }
+    lastMatch.current = -1;
+    setStatus(null);
+    onHexBaseChange(v & 0xffff & 0xfff0);
+  };
 
   return (
     <>
       <div className="paneltitle flex items-center justify-between">
         <span>Memory dump</span>
         <label className="flex items-center gap-2 text-[10px] font-normal normal-case tracking-normal text-ink-dim">
-          Base
+          Goto
           <input
             type="text"
-            value={`0x${hexBase.toString(16).padStart(4, "0")}`}
-            onChange={(e) => {
-              const v = parseInt(e.target.value.replace(/^0x/i, ""), 16);
-              if (!Number.isNaN(v)) onHexBaseChange(v & 0xffff);
+            defaultValue={`0x${hexBase.toString(16).padStart(4, "0")}`}
+            key={`0x${hexBase.toString(16).padStart(4, "0")}`}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                gotoAddress((e.target as HTMLInputElement).value);
+              }
             }}
+            onBlur={(e) => gotoAddress(e.target.value)}
+            aria-label="Goto memory address"
+            title="Goto address — Enter 1A2Bh, 0x1A2B, or decimal"
             className="w-20 rounded border border-line bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] text-ink"
           />
         </label>
+      </div>
+      <div className="flex items-center gap-2 border-b border-line/40 bg-panel px-3.5 py-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              runSearch(hexBase, true);
+            }
+          }}
+          placeholder="Find bytes — 48 65 · 0x48 · Hi"
+          aria-label="Find bytes in memory"
+          className="min-w-0 flex-1 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-amber"
+        />
+        <button
+          type="button"
+          className="btn !px-2.5 !py-1 !text-[11px]"
+          onClick={() => runSearch(hexBase, true)}
+          disabled={!mem}
+          title="Find from current base (wraps)"
+        >
+          Find
+        </button>
+        <button
+          type="button"
+          className="btn !px-2.5 !py-1 !text-[11px]"
+          onClick={() =>
+            runSearch(lastMatch.current >= 0 ? lastMatch.current + 1 : hexBase + 1, true)
+          }
+          disabled={!mem}
+          title="Find next match"
+        >
+          Next
+        </button>
+        {status ? (
+          <span className="shrink-0 font-mono text-[10px] text-ink-dim">{status}</span>
+        ) : null}
       </div>
       <div className="max-h-40 overflow-auto font-mono text-[11px]">
         {!mem ? (

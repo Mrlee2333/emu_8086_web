@@ -235,4 +235,18 @@ end main
 ${footer}`);
     assert.equal(out, "☺");
   });
+
+  it("caps buffered lines so print loops cannot grow memory", () => {
+    const c = new DosConsole();
+    for (let i = 0; i < DosConsole.MAX_LINES + 500; i++) {
+      c.write(`\rline${i}\n`); // CR resets column (LF alone keeps it, per DOS)
+    }
+    const lines = c.text.split("\n");
+    assert.equal(lines.length, DosConsole.MAX_LINES);
+    // Oldest lines dropped, newest retained (last entry is the empty
+    // trailing row after the final LF).
+    assert.equal(lines[0], "line501");
+    assert.equal(lines[lines.length - 2], `line${DosConsole.MAX_LINES + 499}`);
+    assert.equal(c.cursorRow, DosConsole.MAX_LINES - 1);
+  });
 });
