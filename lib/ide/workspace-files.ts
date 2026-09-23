@@ -82,9 +82,14 @@ export function saveFilesToStorage(
   activeId: string,
   openIds?: string[],
 ): void {
-  localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
-  localStorage.setItem(ACTIVE_FILE_KEY, activeId || "");
-  if (openIds) localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openIds));
+  // QuotaExceeded/SecurityError must never break the persist effect.
+  try {
+    localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
+    localStorage.setItem(ACTIVE_FILE_KEY, activeId || "");
+    if (openIds) localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openIds));
+  } catch {
+    /* storage unavailable or full — workspace stays in memory */
+  }
 }
 
 export function loadFilesFromStorage(): {

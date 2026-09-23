@@ -27,15 +27,22 @@ export function CollapsibleSection({
   defaultOpen = true,
   storageKey,
 }: CollapsibleSectionProps) {
-  const [open, setOpen] = useState(() => {
-    if (!storageKey || typeof window === "undefined") return defaultOpen;
-    try {
-      const raw = localStorage.getItem(`emu8086web:panel:${storageKey}`);
-      return raw === null ? defaultOpen : raw === "1";
-    } catch {
-      return defaultOpen;
-    }
-  });
+  // Start from defaultOpen so server HTML matches first client paint;
+  // the stored value loads in an effect (no hydration mismatch).
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    // Deferred (not sync setState) so mount stays cascade-free.
+    queueMicrotask(() => {
+      try {
+        const raw = localStorage.getItem(`emu8086web:panel:${storageKey}`);
+        if (raw !== null) setOpen(raw === "1");
+      } catch {
+        /* best-effort */
+      }
+    });
+  }, [storageKey]);
 
   useEffect(() => {
     if (!storageKey) return;

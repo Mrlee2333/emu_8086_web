@@ -150,6 +150,8 @@ export async function copyWebTree(
 ): Promise<void> {
   const dest = await destParent.getDirectoryHandle(newName, { create: true });
   for await (const entry of src.values()) {
+    // Same visibility policy as listWebFolder: dotfiles stay behind.
+    if (entry.name.startsWith(".")) continue;
     if (entry.kind === "file") {
       const srcFile = await (await src.getFileHandle(entry.name)).getFile();
       const destFile = await dest.getFileHandle(entry.name, { create: true });

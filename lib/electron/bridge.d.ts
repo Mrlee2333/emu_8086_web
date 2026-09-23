@@ -12,8 +12,8 @@ interface ElectronBridge {
    * v1.4.0 folder workspace — present only inside the Electron shell.
    * The allowed root is main-process state; only relPaths cross the bridge.
    */
-  openFolder?: () => Promise<{ root: string; name: string } | null>;
-  getFolder?: () => Promise<{ root: string; name: string } | null>;
+  openFolder?: () => Promise<{ name: string } | null>;
+  getFolder?: () => Promise<{ name: string } | null>;
   closeFolder?: () => Promise<void>;
   listFolder?: () => Promise<ElectronFolderEntry[]>;
   readFolderFile?: (relPath: string) => Promise<string>;

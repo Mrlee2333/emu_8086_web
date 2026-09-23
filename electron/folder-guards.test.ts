@@ -7,14 +7,22 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as guards from "./folder-guards.js";
 
-const { isSafeRelPath, isListableFile, MAX_FOLDER_FILE_BYTES } = guards;
+const {
+  hasNoDotSegments,
+  isSafeRelPath,
+  isListableFile,
+  isSourceFileRel,
+  MAX_FOLDER_FILE_BYTES,
+} = guards;
 
 describe("folder-guards (shipped IPC rules)", () => {
-  it("rejects traversal, absolute, drive, and control-char paths", () => {
+  it("rejects traversal, dot segments, absolute, drive, control paths", () => {
     assert.equal(isSafeRelPath("main.asm"), true);
     assert.equal(isSafeRelPath("examples/sort.asm"), true);
     assert.equal(isSafeRelPath("../../etc/passwd"), false);
     assert.equal(isSafeRelPath("a/../../b"), false);
+    assert.equal(isSafeRelPath("."), false);
+    assert.equal(isSafeRelPath("a/./b.asm"), false);
     assert.equal(isSafeRelPath("/abs/main.asm"), false);
     assert.equal(isSafeRelPath("C:\\win\\evil.asm"), false);
     assert.equal(isSafeRelPath("a\0b.asm"), false);
@@ -29,6 +37,18 @@ describe("folder-guards (shipped IPC rules)", () => {
     assert.equal(isListableFile("prog.exe"), false);
     assert.equal(isListableFile(".hidden.asm"), false);
     assert.equal(isListableFile("noext"), false);
+  });
+
+  it("restricts mutations to visible source files", () => {
+    assert.equal(isSourceFileRel("main.asm"), true);
+    assert.equal(isSourceFileRel("examples/sort.asm"), true);
+    assert.equal(hasNoDotSegments("examples/sort.asm"), true);
+    assert.equal(isSourceFileRel("prog.exe"), false);
+    assert.equal(isSourceFileRel("data.bin"), false);
+    assert.equal(isSourceFileRel(".env"), false);
+    assert.equal(isSourceFileRel(".git/config"), false);
+    assert.equal(isSourceFileRel("sub/.hidden.asm"), false);
+    assert.equal(isSourceFileRel("noext"), false);
   });
 
   it("caps files at 256 KiB", () => {

@@ -6,18 +6,25 @@ const ALU_OPS = new Set([
   "and", "or", "xor", "test", "not", "neg",
   "inc", "dec", "mul", "imul", "div", "idiv",
   "shl", "sal", "shr", "sar", "rol", "ror", "rcl", "rcr",
+  "aaa", "aas", "daa", "das", "aam", "aad",
 ]);
 
-/**
- * Ops whose flags are undefined/untouched on real 8086 hardware
- * (DIV/IDIV leave flags alone; NOT touches nothing).
- */
-const FLAGS_UNDEFINED = new Set(["div", "idiv", "not"]);
+/** Ops whose flags are undefined on real 8086 hardware. */
+const FLAGS_UNDEFINED = new Set(["div", "idiv"]);
+
+/** Ops that leave flags untouched (NOT writes the operand only). */
+const FLAGS_UNCHANGED = new Set(["not"]);
 
 const FLAG_AFFECTED: Record<string, string[]> = {
   add: ["CF", "PF", "AF", "ZF", "SF", "OF"],
   mul: ["CF", "OF"],
   imul: ["CF", "OF"],
+  aaa: ["AF", "CF"],
+  aas: ["AF", "CF"],
+  daa: ["CF", "PF", "AF", "ZF", "SF", "OF"],
+  das: ["CF", "PF", "AF", "ZF", "SF", "OF"],
+  aam: ["CF", "PF", "ZF", "SF", "OF"],
+  aad: ["CF", "PF", "ZF", "SF", "OF"],
   adc: ["CF", "PF", "AF", "ZF", "SF", "OF"],
   sub: ["CF", "PF", "AF", "ZF", "SF", "OF"],
   sbb: ["CF", "PF", "AF", "ZF", "SF", "OF"],
@@ -91,6 +98,14 @@ export function describeAlu({
       op,
       isAluOp: true,
       summary: `${head} — flags undefined on 8086`,
+      affectedFlags: [],
+    };
+  }
+  if (FLAGS_UNCHANGED.has(op)) {
+    return {
+      op,
+      isAluOp: true,
+      summary: `${head} — flags unchanged`,
       affectedFlags: [],
     };
   }

@@ -225,6 +225,12 @@ export function IdeWorkspace() {
 
   const emu = useEmulator(active?.content);
 
+  /** Latest editor text (save callbacks must not commit a stale closure). */
+  const sourceRef = useRef(emu.source);
+  useEffect(() => {
+    sourceRef.current = emu.source;
+  }, [emu.source]);
+
   const lastSynced = useRef<string | null>(null);
   useEffect(() => {
     if (!active) {
@@ -468,6 +474,11 @@ export function IdeWorkspace() {
     if (!dir) return;
     webDirRef.current = dir;
     folderBackendRef.current = "web";
+    // Same reset as the Electron path: stale maps/expansion must not leak.
+    folderMapAppliedRef.current = true;
+    folderPathByFileIdRef.current.clear();
+    persistFolderMap();
+    setExpandedPaths(new Set());
     setFolderName(dir.name);
     const entries = await listWebFolder(dir);
     const root = buildTreeFromPaths(entries);
@@ -581,8 +592,8 @@ export function IdeWorkspace() {
         },
       });
       if (!raw) return;
+      let rel = "";
       try {
-        let rel = "";
         if (isDirectory) {
           const node = createFolderNode({ name: raw, parentPath });
           rel = node.relPath;
@@ -602,6 +613,22 @@ export function IdeWorkspace() {
             );
           }
         } else if (backend === "web" && webDirRef.current) {
+          if (!isDirectory) {
+            // Probe first: create+write would silently truncate an existing file.
+            const parts = rel.split("/").filter(Boolean);
+            const leaf = parts.pop() ?? "";
+            let probe = webDirRef.current;
+            for (const part of parts) {
+              probe = await probe.getDirectoryHandle(part);
+            }
+            const exists = await probe
+              .getFileHandle(leaf)
+              .then(
+                () => true,
+                () => false,
+              );
+            if (exists) throw new Error("Already exists");
+          }
           await createWebEntry(webDirRef.current, rel, isDirectory);
           if (!isDirectory) {
             await writeWebFile(
@@ -618,7 +645,12 @@ export function IdeWorkspace() {
         if (!isDirectory) await openFolderFile(rel);
         else showToast(`Created ${rel}`);
       } catch (e) {
-        showToast(e instanceof Error ? e.message : "Create failed");
+        // Never write the template over an existing file.
+        showToast(
+          e instanceof Error && /already exists/i.test(e.message)
+            ? `Already exists: ${rel}`
+            : (e instanceof Error ? e.message : "Create failed"),
+        );
       }
     },
     [refreshFolder, openFolderFile, showToast, askInput],
@@ -902,7 +934,7 @@ export function IdeWorkspace() {
     }
     const readers = accepted.map(
       (file) =>
-        new Promise<WorkspaceFile>((resolve) => {
+        new Promise<WorkspaceFile | null>((resolve) => {
           const reader = new FileReader();
           reader.onload = () => {
             resolve({
@@ -912,10 +944,28 @@ export function IdeWorkspace() {
               dirty: false,
             });
           };
-          reader.readAsText(file);
+          reader.onerror = () => resolve(null);
+          reader.onabort = () => resolve(null);
+          try {
+            reader.readAsText(file);
+          } catch {
+            resolve(null);
+          }
         }),
     );
-    void Promise.all(readers).then((opened) => {
+    void Promise.all(readers).then((results) => {
+      const opened = results.filter((f): f is WorkspaceFile => f !== null);
+      if (opened.length === 0) {
+        showToast("Could not read the selected file(s)");
+        return;
+      }
+      if (opened.length < accepted.length) {
+        showToast(
+          `Opened ${opened.length} of ${accepted.length} file(s) — some could not be read`,
+        );
+      } else {
+        showToast(`Opened ${opened.length} file(s)`);
+      }
       setFiles((prev) => {
         const flushed = prev.map((f) =>
           f.id === activeId ? { ...f, content: emu.source } : f,
@@ -928,7 +978,6 @@ export function IdeWorkspace() {
       ]);
       setActiveId(opened[opened.length - 1].id);
       lastSynced.current = null;
-      showToast(`Opened ${opened.length} file(s)`);
     });
     e.target.value = "";
   };
@@ -980,40 +1029,33 @@ export function IdeWorkspace() {
       return;
     }
     // Folder-backed files save straight back to disk (Electron / FS Access).
+    // Capture once: edits typed during the async write must stay dirty.
+    const content = emu.source;
     const folderRel = folderPathByFileIdRef.current.get(activeId);
     const backend = folderBackendRef.current;
+    const markSaved = () => {
+      const movedOn = sourceRef.current !== content;
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === activeId
+            ? { ...f, content: movedOn ? f.content : content, dirty: movedOn }
+            : f,
+        ),
+      );
+      showToast(
+        movedOn ? `Saved ${folderRel} (newer edits still unsaved)` : `Saved ${folderRel}`,
+      );
+    };
     if (folderRel && backend === "electron") {
       void window.electronAPI
-        ?.writeFolderFile?.(folderRel, emu.source)
-        .then(
-          () => {
-            setFiles((prev) =>
-              prev.map((f) =>
-                f.id === activeId
-                  ? { ...f, content: emu.source, dirty: false }
-                  : f,
-              ),
-            );
-            showToast(`Saved ${folderRel}`);
-          },
-          () => showToast("Save to folder failed"),
-        );
+        ?.writeFolderFile?.(folderRel, content)
+        .then(markSaved, () => showToast("Save to folder failed"));
       return;
     }
     if (folderRel && backend === "web" && webDirRef.current) {
       const dir = webDirRef.current;
-      void writeWebFile(dir, folderRel, emu.source).then(
-        () => {
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.id === activeId
-                ? { ...f, content: emu.source, dirty: false }
-                : f,
-            ),
-          );
-          showToast(`Saved ${folderRel}`);
-        },
-        () => showToast("Save to folder failed"),
+      void writeWebFile(dir, folderRel, content).then(markSaved, () =>
+        showToast("Save to folder failed"),
       );
       return;
     }

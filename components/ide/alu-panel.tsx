@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import type { Machine } from "@/lib/emulator/machine";
 import { describeAlu } from "@/lib/ide/alu-info";
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
@@ -9,17 +8,18 @@ import { CollapsibleSection } from "@/components/ide/collapsible-section";
  * ALU internal-operation view (v1.4.0) — mirrors the original Windows
  * emu8086 "ALU shows the internal work of the CPU" panel.
  * Pure description of the next instruction; no emulator changes.
+ * Computed inline every render: Machine mutates in place on step(), so a
+ * memo on the (stable) object identity would go stale while stepping.
  */
 export function AluPanel({ machine }: { machine: Machine | null }) {
-  const info = useMemo(() => {
-    if (!machine) return null;
-    return describeAlu({
-      instrs: machine.a.instrs,
-      ip: machine.ip,
-      reg: machine.reg,
-      flags: machine.flags,
-    });
-  }, [machine]);
+  const info = machine
+    ? describeAlu({
+        instrs: machine.a.instrs,
+        ip: machine.ip,
+        reg: machine.reg,
+        flags: machine.flags,
+      })
+    : null;
 
   return (
     <CollapsibleSection

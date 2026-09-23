@@ -80,8 +80,9 @@ export function tokenizeAsmLine(line: string): AsmToken[] {
       i = j;
       continue;
     }
-    // Numbers: hex (1A2Bh / 0x1A / 1010b), decimal.
-    const numMatch = /^[0-9][0-9a-fA-F]*[hHbBdD]?|^0[xX][0-9a-fA-F]+/.exec(
+    // Numbers: hex (1A2Bh / 0x1A / 1010b), decimal. The 0x form must
+    // match first — otherwise `0` wins and `x1A` falls through to text.
+    const numMatch = /^0[xX][0-9a-fA-F]+|^[0-9][0-9a-fA-F]*[hHbBdD]?/.exec(
       line.slice(i),
     );
     if (numMatch && /[0-9]/.test(numMatch[0][0])) {
@@ -99,6 +100,13 @@ export function tokenizeAsmLine(line: string): AsmToken[] {
       const word = wordMatch[0];
       const low = word.toLowerCase();
       const j = i + word.length;
+      // Segment overrides (`es:[bx]`) are register + punct, not labels.
+      if (line[j] === ":" && (low === "cs" || low === "ds" || low === "es" || low === "ss")) {
+        push("register", word);
+        push("punct", ":");
+        i = j + 1;
+        continue;
+      }
       const isLabel = line[j] === ":";
       if (isLabel) {
         push("label", word + ":");

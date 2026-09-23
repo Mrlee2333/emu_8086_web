@@ -278,8 +278,10 @@ function showFatal(message) {
 const {
   MAX_FOLDER_ENTRIES,
   MAX_FOLDER_FILE_BYTES,
+  hasNoDotSegments,
   isSafeRelPath,
   isListableFile,
+  isSourceFileRel,
 } = require("./folder-guards");
 
 /** Main-side allowed root (set by the native folder picker only). */
@@ -334,19 +336,34 @@ function clearAllowedRoot() {
 
 /**
  * Resolve `rel` inside the allowed root. Uses path.relative so the check
- * holds on case-insensitive filesystems (Windows) too.
+ * holds on case-insensitive filesystems (Windows) too, then re-resolves
+ * symlinks with realpath so a linked dir/file can't escape confinement.
  */
-function resolveInside(rel) {
+async function resolveInside(rel) {
   if (!allowedRoot) throw new Error("No folder open");
   if (!isSafeRelPath(rel)) throw new Error("Invalid path");
-  const absRoot = path.resolve(allowedRoot);
+  const absRoot = await fs.realpath(path.resolve(allowedRoot));
   const target = path.resolve(absRoot, rel);
-  const outside =
-    path.relative(absRoot, target).startsWith(`..${path.sep}`) ||
-    path.relative(absRoot, target) === ".." ||
-    path.isAbsolute(path.relative(absRoot, target));
-  if (outside) throw new Error("Path escapes the opened folder");
+  const real = await fs.realpath(target).catch(() => target);
+  const relCheck = path.relative(absRoot, real);
+  if (relCheck === ".." || relCheck.startsWith(`..${path.sep}`) || path.isAbsolute(relCheck)) {
+    throw new Error("Path escapes the opened folder");
+  }
   return target;
+}
+
+/** Resolve a mutable source FILE (extension + dotfile policy enforced). */
+async function resolveSourceFile(rel) {
+  if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
+  return resolveInside(rel);
+}
+
+/** Resolve a mutable DIRECTORY (no hidden segments). */
+async function resolveSourceDir(rel) {
+  if (!isSafeRelPath(rel) || !hasNoDotSegments(rel)) {
+    throw new Error("Invalid folder path");
+  }
+  return resolveInside(rel);
 }
 
 async function listFolderRecursive(root) {
@@ -364,6 +381,8 @@ async function listFolderRecursive(root) {
     }
     for (const e of entries) {
       if (e.name.startsWith(".")) continue;
+      // Never follow symlinks out of the workspace.
+      if (e.isSymbolicLink()) continue;
       const rel = relDir ? `${relDir}/${e.name}` : e.name;
       if (e.isDirectory()) {
         out.push({ relPath: rel, isDirectory: true });
@@ -413,7 +432,7 @@ function registerFolderIpc() {
   });
 
   ipcMain.handle("emu8086web:read-folder-file", async (_e, rel) => {
-    const abs = resolveInside(rel);
+    const abs = await resolveSourceFile(rel);
     const st = await fs.stat(abs);
     if (!st.isFile()) throw new Error("Not a file");
     if (st.size > MAX_FOLDER_FILE_BYTES) throw new Error("File too large (256 KiB cap)");
@@ -427,7 +446,7 @@ function registerFolderIpc() {
       if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
         throw new Error("File too large (256 KiB cap)");
       }
-      const abs = resolveInside(rel);
+      const abs = await resolveSourceFile(rel);
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, content, "utf8");
     },
@@ -436,12 +455,22 @@ function registerFolderIpc() {
   ipcMain.handle(
     "emu8086web:create-folder-entry",
     async (_e, rel, isDirectory) => {
-      const abs = resolveInside(rel);
-      if (isDirectory) await fs.mkdir(abs, { recursive: true });
-      else {
+      if (isDirectory !== true && isDirectory !== false) {
+        throw new Error("Invalid isDirectory");
+      }
+      if (isDirectory) {
+        const abs = await resolveSourceDir(rel);
+        await fs.mkdir(abs, { recursive: true });
+      } else {
+        const abs = await resolveSourceFile(rel);
         await fs.mkdir(path.dirname(abs), { recursive: true });
-        const handle = await fs.open(abs, "wx").catch(() => null);
-        if (handle) await handle.close();
+        try {
+          const handle = await fs.open(abs, "wx");
+          await handle.close();
+        } catch (err) {
+          if (err && err.code === "EEXIST") throw new Error("Already exists");
+          throw err;
+        }
       }
     },
   );
@@ -450,14 +479,29 @@ function registerFolderIpc() {
     if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
       throw new Error("Invalid path");
     }
-    const from = resolveInside(oldRel);
-    const to = resolveInside(newRel);
+    if (!hasNoDotSegments(oldRel) || !hasNoDotSegments(newRel)) {
+      throw new Error("Invalid path");
+    }
+    const newLeaf = newRel.split(/[\\/]/).pop() || "";
+    if (newLeaf.includes(".") && !isListableFile(newLeaf)) {
+      throw new Error("Only .asm/.txt/.inc files");
+    }
+    const from = await resolveInside(oldRel);
+    const to = await resolveInside(newRel);
+    try {
+      await fs.access(to);
+      throw new Error("Already exists");
+    } catch (err) {
+      if (err && err.message === "Already exists") throw err;
+      // ENOENT → target free, proceed.
+    }
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.rename(from, to);
   });
 
   ipcMain.handle("emu8086web:delete-folder-entry", async (_e, rel) => {
-    const abs = resolveInside(rel);
+    if (!hasNoDotSegments(rel)) throw new Error("Invalid path");
+    const abs = await resolveInside(rel);
     await fs.rm(abs, { recursive: true, force: true });
   });
 }

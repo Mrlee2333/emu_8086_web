@@ -39,7 +39,7 @@ describe("describeAlu", () => {
     assert.equal(out?.isAluOp, false);
   });
 
-  it("lists CF/OF for mul and undefined flags for div/not", () => {
+  it("lists CF/OF for mul and undefined flags for div", () => {
     const mul = describeAlu({
       instrs: [{ op: "mul", args: ["bl"], ln: 1 }],
       ip: 0,
@@ -48,16 +48,47 @@ describe("describeAlu", () => {
     });
     assert.ok(mul?.isAluOp);
     assert.deepEqual(mul?.affectedFlags, ["CF", "OF"]);
-    for (const op of ["div", "not"]) {
+    const div = describeAlu({
+      instrs: [{ op: "div", args: ["bl"], ln: 1 }],
+      ip: 0,
+      reg,
+      flags,
+    });
+    assert.ok(div?.isAluOp);
+    assert.deepEqual(div?.affectedFlags, []);
+    assert.ok(div?.summary.includes("undefined"));
+  });
+
+  it("marks not as flags-unchanged, not undefined", () => {
+    const out = describeAlu({
+      instrs: [{ op: "not", args: ["ax"], ln: 1 }],
+      ip: 0,
+      reg,
+      flags,
+    });
+    assert.ok(out?.isAluOp);
+    assert.deepEqual(out?.affectedFlags, []);
+    assert.ok(out?.summary.includes("unchanged"));
+  });
+
+  it("covers BCD adjust ops with their emulator flag sets", () => {
+    const cases: [string, string[]][] = [
+      ["aaa", ["AF", "CF"]],
+      ["aas", ["AF", "CF"]],
+      ["daa", ["CF", "PF", "AF", "ZF", "SF", "OF"]],
+      ["das", ["CF", "PF", "AF", "ZF", "SF", "OF"]],
+      ["aam", ["CF", "PF", "ZF", "SF", "OF"]],
+      ["aad", ["CF", "PF", "ZF", "SF", "OF"]],
+    ];
+    for (const [op, expected] of cases) {
       const out = describeAlu({
-        instrs: [{ op, args: ["bl"], ln: 1 }],
+        instrs: [{ op, args: [], ln: 1 }],
         ip: 0,
         reg,
         flags,
       });
-      assert.ok(out?.isAluOp);
-      assert.deepEqual(out?.affectedFlags, []);
-      assert.ok(out?.summary.includes("undefined"));
+      assert.ok(out?.isAluOp, op);
+      assert.deepEqual(out?.affectedFlags, expected, op);
     }
   });
 

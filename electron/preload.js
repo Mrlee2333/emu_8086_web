@@ -29,8 +29,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   // Note: the allowed root lives in the main process (userData-persisted).
   // The renderer only sends paths relative to it — never absolute roots.
-  openFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.openFolder),
-  getFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.getFolder),
+  openFolder: () =>
+    ipcRenderer
+      .invoke(FOLDER_CHANNELS.openFolder)
+      .then((r) => (r ? { name: r.name } : null)),
+  // Display name only — the absolute root never crosses to the renderer.
+  getFolder: () =>
+    ipcRenderer
+      .invoke(FOLDER_CHANNELS.getFolder)
+      .then((r) => (r ? { name: r.name } : null)),
   closeFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.closeFolder),
   listFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.listFolder),
   readFolderFile: (relPath) =>
