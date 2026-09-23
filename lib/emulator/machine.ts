@@ -109,7 +109,8 @@ export class Machine {
     if (base && this.a.dataVars[base]) addr += this.a.dataVars[base].addr;
     for (const offsetExpr of brackets) {
       for (const p of offsetExpr.split("+").map((x) => x.trim())) {
-        if (this.isReg16(p)) addr += this.reg[p];
+        const key = p.toLowerCase();
+        if (this.isReg16(key)) addr += this.reg[key];
         else {
           const n = parseNumber(p);
           if (n !== null) addr += n;

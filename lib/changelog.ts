@@ -8,6 +8,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.6",
+    date: "2026-09-23",
+    highlights: [
+      "Uppercase memory operands fixed: [SI], [SI+2], ARR[SI], [BX+SI]",
+      "Regression tests: uppercase operands + case-insensitivity coverage",
+    ],
+  },
+  {
     version: "1.2.5",
     date: "2026-09-09",
     highlights: [

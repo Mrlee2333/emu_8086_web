@@ -2,6 +2,17 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.2.6] — 2026-09-23
+
+### Fixed
+
+- Memory operands with uppercase registers (`[SI]`, `[SI+2]`, `ARR[SI]`, `[BX+SI]`, `MARK[BX][SI]`) now resolve correctly — previously only lowercase worked, which returned wrong data whenever the target was not at offset 0
+- String search over memory with an uppercase index register no longer misses or loops past the terminator
+
+### Added
+
+- Regression suite (`lib/emulator/addressing-modes.test.ts`): uppercase memory operands plus case-insensitivity coverage for opcodes, registers, directives, hex/binary suffixes, `DUP`, `OFFSET`/`LEA`, `BYTE/WORD PTR`, and quoted-semicolon strings
+
 ## [1.2.5] — 2026-09-09
 
 ### Added

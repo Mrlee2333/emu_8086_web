@@ -98,6 +98,8 @@ Program terminate.
 
 Memory operand size follows an 8-bit or 16-bit register: `mov [si], bl` writes one byte. Use `byte ptr` / `word ptr` when both operands are memory or immediate.
 
+Opcodes, registers, directives, labels, and number suffixes are case-insensitive (`MOV`/`mov`, `[SI]`/`[si]`, `ARR[SI]`/`arr[si]`, `09H`/`09h`, `DUP`/`dup`, `OFFSET`/`offset`, `@DATA`/`@data`).
+
 ## Extending
 
 1. Add a `case` in `Machine.executeInstruction()` (`machine.ts`)
