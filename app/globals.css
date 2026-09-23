@@ -285,6 +285,15 @@ body {
   }
 }
 
+/* Left-side variant for buttons inside scrolling containers (tree rows):
+   vertically centered, so it never clips at the top/bottom edge. */
+[data-tip][data-tip-side="left"]:hover::after,
+[data-tip][data-tip-side="left"]:focus-visible::after {
+  top: 50%;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
 /* v1.4.0 ASM syntax highlight overlay (behind the transparent textarea) */
 .tok-comment { color: var(--tok-comment); font-style: italic; }
 .tok-string { color: var(--tok-string); }

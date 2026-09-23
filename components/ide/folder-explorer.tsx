@@ -67,16 +67,16 @@ function IconBtn({
   onClick,
   danger,
   bubble = true,
+  tipSide,
   children,
 }: {
   title: string;
   onClick: (e: React.MouseEvent) => void;
   danger?: boolean;
-  /**
-   * Custom bubble tooltip. Disabled inside the scrolling tree, where the
-   * overflow container would clip it — native `title` still applies there.
-   */
+  /** Custom bubble tooltip (native `title` always applies as fallback). */
   bubble?: boolean;
+  /** "left" centers the bubble beside the button — safe in scrollers. */
+  tipSide?: "below" | "left";
   children: ReactNode;
 }) {
   return (
@@ -88,6 +88,7 @@ function IconBtn({
       title={title}
       aria-label={title}
       data-tip={bubble ? title : undefined}
+      data-tip-side={bubble && tipSide === "left" ? "left" : undefined}
       onClick={onClick}
     >
       {children}
@@ -222,14 +223,14 @@ function DiskView(props: DiskExplorerProps) {
                     <>
                       <IconBtn
                         title={`New file in ${node.name}`}
-                        bubble={false}
+                        tipSide="left"
                         onClick={() => onNewFile(node.relPath)}
                       >
                         <IconFilePlus />
                       </IconBtn>
                       <IconBtn
                         title={`New folder in ${node.name}`}
-                        bubble={false}
+                        tipSide="left"
                         onClick={() => onNewFolder(node.relPath)}
                       >
                         <IconFolderPlus />
@@ -238,7 +239,7 @@ function DiskView(props: DiskExplorerProps) {
                   ) : null}
                   <IconBtn
                     title={`Rename ${node.name}`}
-                    bubble={false}
+                    tipSide="left"
                     onClick={() => onRename(node.relPath)}
                   >
                     <IconPencil />
@@ -246,7 +247,7 @@ function DiskView(props: DiskExplorerProps) {
                   <IconBtn
                     title={`Delete ${node.name}`}
                     danger
-                    bubble={false}
+                    tipSide="left"
                     onClick={() => onDelete(node.relPath)}
                   >
                     <IconTrash />
@@ -367,7 +368,7 @@ function VirtualView(props: VirtualExplorerProps) {
                 <span className="hidden shrink-0 items-center group-hover:flex">
                   <IconBtn
                     title={`Rename ${f.name}`}
-                    bubble={false}
+                    tipSide="left"
                     onClick={() => onRename(f.id)}
                   >
                     <IconPencil />
@@ -375,7 +376,7 @@ function VirtualView(props: VirtualExplorerProps) {
                   <IconBtn
                     title={`Delete ${f.name}`}
                     danger
-                    bubble={false}
+                    tipSide="left"
                     onClick={() => onDelete(f.id)}
                   >
                     <IconTrash />

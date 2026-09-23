@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunState, SampleKey } from "@/lib/emulator";
 import { SAMPLE_OPTIONS } from "@/lib/emulator";
-import { BrandWordmark } from "@/components/brand/brand-mark";
+import { BrandMark, BrandWordmark } from "@/components/brand/brand-mark";
 import { HelpMenu } from "@/components/ide/help-menu";
 import {
   IconChevronDown,
@@ -118,15 +118,18 @@ function FileMenu({
     >
       <button
         type="button"
-        className="btn inline-flex items-center gap-1.5"
+        className="btn inline-flex shrink-0 items-center gap-1.5"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
+        aria-label="File menu"
         title="File — open, save, share"
       >
         <IconFolderOpen />
-        <span>File</span>
-        <IconChevronDown />
+        <span className="hidden lg:inline">File</span>
+        <span className="hidden lg:inline-flex">
+          <IconChevronDown />
+        </span>
       </button>
 
       {open && (
@@ -189,18 +192,24 @@ export function Toolbar({
   onOpenSettings,
 }: ToolbarProps) {
   return (
-    <header className="flex flex-wrap items-center gap-2 border-b border-line bg-linear-to-b from-[var(--panel)] to-[var(--bg)] px-2 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
-      <div className="min-w-0">
-        <BrandWordmark />
+    <header className="flex items-center gap-2 border-b border-line bg-linear-to-b from-[var(--panel)] to-[var(--bg)] px-2 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
+      <div className="min-w-0 shrink-0">
+        <span className="sm:hidden" aria-hidden={false} title="emu8086web">
+          <BrandMark size={26} />
+        </span>
+        <span className="hidden sm:block">
+          <BrandWordmark />
+        </span>
         <p className="mt-0.5 hidden text-[10px] uppercase tracking-[0.14em] text-ink-dim sm:block">
           v{APP_VERSION} · {fileName || "no file"}
         </p>
       </div>
 
       <select
-        className="max-w-[140px] rounded border border-line bg-panel-2 px-2 py-2 font-mono text-xs text-ink sm:max-w-none"
+        className="w-[86px] shrink-0 truncate rounded border border-line bg-panel-2 px-2 py-2 font-mono text-xs text-ink sm:w-auto sm:max-w-[140px]"
         defaultValue=""
         aria-label="Load sample program"
+        title="Load sample program"
         onChange={(e) => {
           const v = e.target.value as SampleKey;
           if (v) onSample(v);
@@ -215,69 +224,78 @@ export function Toolbar({
         ))}
       </select>
 
-      <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
-        <FileMenu onOpen={onOpen} onSave={onSave} onSaveAs={onSaveAs} onShare={onShare} />
-        <div className="hidden h-6 w-px bg-line sm:block" />
+      <FileMenu onOpen={onOpen} onSave={onSave} onSaveAs={onSaveAs} onShare={onShare} />
+      <div className="hidden h-6 w-px shrink-0 bg-line sm:block" />
+      {/* Single line on small screens: icon-only buttons in a scroll strip. */}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 sm:gap-2">
         <button
           type="button"
-          className="btn btn-primary inline-flex items-center gap-1.5"
+          className="btn btn-primary inline-flex shrink-0 items-center gap-1.5"
           onClick={onAssemble}
+          aria-label="Compile"
           title="Compile (F5)"
         >
           <IconCompile />
-          <span>Compile</span>
+          <span className="hidden lg:inline">Compile</span>
         </button>
         {isRunning ? (
           <button
             type="button"
-            className="btn inline-flex items-center gap-1.5"
+            className="btn inline-flex shrink-0 items-center gap-1.5"
             onClick={onPause}
+            aria-label="Pause"
             title="Pause (Esc)"
           >
             <IconPause />
-            <span>Pause</span>
+            <span className="hidden lg:inline">Pause</span>
           </button>
         ) : (
           <button
             type="button"
-            className="btn inline-flex items-center gap-1.5"
+            className="btn inline-flex shrink-0 items-center gap-1.5"
             disabled={!canRun}
             onClick={onRun}
+            aria-label="Run"
             title="Run"
           >
             <IconPlay />
-            <span>Run</span>
+            <span className="hidden lg:inline">Run</span>
           </button>
         )}
         <button
           type="button"
-          className="btn inline-flex items-center gap-1.5"
+          className="btn inline-flex shrink-0 items-center gap-1.5"
           disabled={!canRun || isRunning}
           onClick={onStep}
+          aria-label="Single Step"
           title="Single Step (F8)"
         >
           <IconStepOver />
-          <span>Single Step</span>
+          <span className="hidden lg:inline">Single Step</span>
         </button>
         <button
           type="button"
-          className="btn inline-flex items-center gap-1.5"
+          className="btn inline-flex shrink-0 items-center gap-1.5"
           disabled={!canStepBack || isRunning}
           onClick={onStepBack}
+          aria-label="Step Back"
           title="Step Back (Shift+F8)"
         >
           <IconStepBack />
-          <span>Step Back</span>
+          <span className="hidden lg:inline">Step Back</span>
         </button>
         <button
           type="button"
-          className="btn btn-danger inline-flex items-center gap-1.5"
+          className="btn btn-danger inline-flex shrink-0 items-center gap-1.5"
           onClick={onReset}
+          aria-label="Reset"
           title="Reset"
         >
           <IconReset />
-          <span>Reset</span>
+          <span className="hidden lg:inline">Reset</span>
         </button>
+      </div>
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
         <div className="hidden h-6 w-px bg-line lg:block" />
         <label className="hidden items-center gap-2 text-[10px] uppercase tracking-wider text-ink-dim xl:flex">
           Speed
@@ -301,7 +319,7 @@ export function Toolbar({
           {theme === "dark" ? <IconSun /> : <IconMoon />}
         </button>
         <span
-          className={`badge ${runState === "running" ? "badge-live" : ""} ${runState === "halted" ? "badge-halt" : ""} ${runState === "error" ? "badge-error" : ""}`}
+          className={`badge hidden sm:inline ${runState === "running" ? "badge-live" : ""} ${runState === "halted" ? "badge-halt" : ""} ${runState === "error" ? "badge-error" : ""}`}
         >
           {BADGE[runState]}
         </span>

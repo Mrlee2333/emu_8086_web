@@ -30,6 +30,7 @@ All notable changes to emu8086web are documented in this file.
 - Empty folders stay folders (were misbuilt as files, blocking file creation inside); folder icons show open/closed state
 - CPU column panels (registers, flags, ALU, status, watch, data, memory, stacks) collapse via header chevrons
 - Project export is a single `emu8086-project.zip` (dependency-free writer) instead of per-file downloads
+- Toolbar stays on one line on small screens (icon-only buttons in a scroll strip); tree-row icon buttons show side-positioned tooltips that can't clip
 
 ## [1.3.2] — 2026-09-23
 
