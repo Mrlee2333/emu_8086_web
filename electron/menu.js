@@ -75,7 +75,8 @@ function buildAppMenu({ appName, isDev, onCheckForUpdates }) {
       { label: "Compile", click: clickSend("emu:assemble") },
       { label: "Run", click: clickSend("emu:run") },
       { label: "Pause", click: clickSend("emu:pause") },
-      { label: "Step", click: clickSend("emu:step") },
+      { label: "Single Step", click: clickSend("emu:step") },
+      { label: "Step Back", click: clickSend("emu:step-back") },
       { label: "Reset", click: clickSend("emu:reset") },
     ],
   };

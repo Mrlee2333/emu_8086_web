@@ -407,6 +407,7 @@ export function IdeWorkspace() {
       "emu:run": () => emu.doRun(),
       "emu:pause": () => emu.doPause(),
       "emu:step": () => emu.doStep(),
+      "emu:step-back": () => emu.doStepBack(),
       "emu:reset": () => emu.doReset(),
       "help:shortcuts": () =>
         window.dispatchEvent(
@@ -500,6 +501,11 @@ export function IdeWorkspace() {
         if (hasFiles) emu.doAssemble();
         return;
       }
+      if (hit("stepBack")) {
+        e.preventDefault();
+        emu.doStepBack();
+        return;
+      }
       if (hit("step")) {
         e.preventDefault();
         emu.doStep();
@@ -576,6 +582,7 @@ export function IdeWorkspace() {
         runState={emu.runState}
         canRun={hasFiles && !!machine && !machine.halted}
         isRunning={emu.runState === "running"}
+        canStepBack={emu.canStepBack}
         runSpeed={emu.runSpeed}
         theme={emu.theme}
         fileName={active?.name ?? ""}
@@ -589,6 +596,7 @@ export function IdeWorkspace() {
         onRun={emu.doRun}
         onPause={emu.doPause}
         onStep={emu.doStep}
+        onStepBack={emu.doStepBack}
         onReset={emu.doReset}
         onSample={loadSample}
         onOpen={handleOpen}

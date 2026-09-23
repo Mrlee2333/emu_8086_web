@@ -24,6 +24,18 @@ export class DosConsole {
     return this.col;
   }
 
+  /** Serializable console state for step-back / time-travel restore. */
+  getState(): { lines: string[]; row: number; col: number } {
+    return { lines: [...this.lines], row: this.row, col: this.col };
+  }
+
+  setState(state: { lines: string[]; row: number; col: number }): void {
+    this.lines = [...state.lines];
+    if (this.lines.length === 0) this.lines = [""];
+    this.row = Math.min(Math.max(0, state.row), this.lines.length - 1);
+    this.col = Math.max(0, state.col);
+  }
+
   clear(): void {
     this.lines = [""];
     this.row = 0;

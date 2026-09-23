@@ -29,6 +29,7 @@ export type { Cp437Entry } from "./cp437";
 export type {
   AssembledProgram,
   DataVariable,
+  FullMachineState,
   Instruction,
   MachineSnapshot,
   RunState,

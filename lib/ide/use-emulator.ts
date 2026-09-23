@@ -9,6 +9,7 @@ import {
   encodeProgramToShare,
   INSTRUCTION_LIMIT,
   type AssembledProgram,
+  type FullMachineState,
   type RunState,
   type SampleKey,
   SAMPLES,
@@ -17,6 +18,9 @@ import {
 import { Machine } from "@/lib/emulator/machine";
 
 export type Theme = "dark" | "light";
+
+/** Cap step-back history (each entry holds a 64 KiB memory copy). */
+export const MAX_STEP_HISTORY = 512;
 
 export function useEmulator(initialSource?: string) {
   const [source, setSource] = useState(initialSource ?? DEFAULT_SOURCE);
@@ -32,11 +36,14 @@ export function useEmulator(initialSource?: string) {
   const [theme, setTheme] = useState<Theme>("dark");
   const [hexBase, setHexBase] = useState(0);
   const [tick, setTick] = useState(0);
+  const [canStepBack, setCanStepBack] = useState(false);
 
   const runTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const guardRef = useRef(0);
   const machineRef = useRef<Machine | null>(null);
   const breakpointsRef = useRef(breakpoints);
+  /** Reversible history for Step Back (oldest → newest). */
+  const historyRef = useRef<FullMachineState[]>([]);
   /** True after Run until Pause / halt / reset — survives INT 21h input waits. */
   const keepRunningRef = useRef(false);
 
@@ -84,8 +91,22 @@ export function useEmulator(initialSource?: string) {
     stopTimer();
   }, [stopTimer]);
 
+  const clearHistory = useCallback(() => {
+    historyRef.current = [];
+    setCanStepBack(false);
+  }, []);
+
+  const pushHistory = useCallback((m: Machine) => {
+    historyRef.current.push(m.capture());
+    if (historyRef.current.length > MAX_STEP_HISTORY) {
+      historyRef.current.shift();
+    }
+    setCanStepBack(true);
+  }, []);
+
   const doAssemble = useCallback(() => {
     stopRun();
+    clearHistory();
     setAssemblyError(null);
     setAssemblyErrorLine(null);
     try {
@@ -116,10 +137,11 @@ export function useEmulator(initialSource?: string) {
       refresh();
       return false;
     }
-  }, [source, stopRun, refresh]);
+  }, [source, stopRun, refresh, clearHistory]);
 
   const doReset = useCallback(() => {
     stopRun();
+    clearHistory();
     if (assembled) {
       const m = createMachine(assembled);
       setMachine(m);
@@ -134,7 +156,7 @@ export function useEmulator(initialSource?: string) {
       setAssemblyErrorLine(null);
       refresh();
     }
-  }, [assembled, stopRun, refresh]);
+  }, [assembled, stopRun, refresh, clearHistory]);
 
   const updateRunStateFromMachine = useCallback(
     (m: Machine) => {
@@ -150,9 +172,21 @@ export function useEmulator(initialSource?: string) {
   const doStep = useCallback(() => {
     const m = machineRef.current;
     if (!m || m.halted || m.waitingForInput) return;
+    pushHistory(m);
     m.step();
     updateRunStateFromMachine(m);
-  }, [updateRunStateFromMachine]);
+  }, [updateRunStateFromMachine, pushHistory]);
+
+  const doStepBack = useCallback(() => {
+    const m = machineRef.current;
+    if (!m) return;
+    const prev = historyRef.current.pop();
+    if (!prev) return;
+    stopRun();
+    m.restore(prev);
+    setCanStepBack(historyRef.current.length > 0);
+    updateRunStateFromMachine(m);
+  }, [stopRun, updateRunStateFromMachine]);
 
   const runBatch = useCallback(() => {
     const m = machineRef.current;
@@ -167,6 +201,8 @@ export function useEmulator(initialSource?: string) {
       return;
     }
 
+    // One reversible checkpoint per batch so Step Back can undo a Run burst.
+    pushHistory(m);
     let ok = true;
     for (let i = 0; i < 200 && ok; i++) {
       if (m.waitingForInput) break;
@@ -191,7 +227,7 @@ export function useEmulator(initialSource?: string) {
       return;
     }
     if (!ok || m.halted || m.err) stopRun();
-  }, [stopRun, stopTimer, updateRunStateFromMachine]);
+  }, [stopRun, stopTimer, updateRunStateFromMachine, pushHistory]);
 
   const doRun = useCallback(() => {
     const m = machineRef.current;
@@ -224,6 +260,7 @@ export function useEmulator(initialSource?: string) {
   const loadSample = useCallback(
     (key: SampleKey) => {
       stopRun();
+      clearHistory();
       setSource(SAMPLES[key]);
       setAssembled(null);
       setMachine(null);
@@ -233,7 +270,7 @@ export function useEmulator(initialSource?: string) {
       setAssemblyErrorLine(null);
       refresh();
     },
-    [stopRun, refresh],
+    [stopRun, refresh, clearHistory],
   );
 
   const shareLink = useCallback(() => {
@@ -245,6 +282,9 @@ export function useEmulator(initialSource?: string) {
     (chars: string) => {
       const m = machineRef.current;
       if (!m || !chars) return;
+      // Input unblocks execution — keep it reversible where we single-step.
+      const wasRunning = keepRunningRef.current;
+      if (!wasRunning) pushHistory(m);
       m.enqueueInput(chars);
       if (keepRunningRef.current) {
         if (!runTimerRef.current) {
@@ -257,7 +297,7 @@ export function useEmulator(initialSource?: string) {
       m.step();
       updateRunStateFromMachine(m);
     },
-    [runBatch, runSpeed, updateRunStateFromMachine],
+    [runBatch, runSpeed, updateRunStateFromMachine, pushHistory],
   );
 
   useEffect(() => () => stopRun(), [stopRun]);
@@ -282,6 +322,8 @@ export function useEmulator(initialSource?: string) {
     doAssemble,
     doReset,
     doStep,
+    doStepBack,
+    canStepBack,
     doRun,
     doPause,
     loadSample,
