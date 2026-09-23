@@ -329,28 +329,38 @@ export function flattenVisible({
   return rows.slice(0, MAX_TREE_NODES);
 }
 
-/** Build a tree from a flat list of posix relPaths (e.g. Electron readdir). */
-export function buildTreeFromPaths(paths: string[]): ExplorerRoot {
+/**
+ * Flat directory entry (e.g. Electron readdir / File System Access walk).
+ * `isDirectory` is authoritative — string inputs fall back to the extension
+ * heuristic for backward compatibility.
+ */
+export type TreeEntry = {
+  relPath: string;
+  isDirectory: boolean;
+};
+
+/** Build a tree from flat posix relPaths (empty folders stay folders). */
+export function buildTreeFromPaths(paths: (string | TreeEntry)[]): ExplorerRoot {
   const root = createExplorerRoot();
   let result = root;
-  for (const raw of paths) {
+  for (const entry of paths) {
+    const raw = typeof entry === "string" ? entry : entry.relPath;
+    const forcedDir = typeof entry !== "string" && entry.isDirectory;
     const parts = raw.split("/").filter(Boolean);
     if (parts.length === 0) continue;
     let parentPath = "";
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       const isLast = i === parts.length - 1;
-      // Heuristic: last segment with a dot/extension is a file; else folder.
-      const looksFile = isLast && /\.[a-z0-9]{1,5}$/i.test(part);
+      // Explicit directory flags win; otherwise the last segment with a
+      // dot/extension is a file and everything else is a folder.
+      const isFolder =
+        !isLast || forcedDir || !/\.[a-z0-9]{1,5}$/i.test(part);
       const existing = findNode({ root: result, relPath: joinRelPath(parentPath, part) });
       if (!existing) {
-        const node = looksFile || isLast
-          ? createFileNode({ name: part, parentPath })
-          : createFolderNode({ name: part, parentPath });
-        // Intermediate segments are always folders.
-        const toAdd = !isLast
+        const toAdd = isFolder
           ? createFolderNode({ name: part, parentPath })
-          : node;
+          : createFileNode({ name: part, parentPath });
         result = addNode({ root: result, parentPath, node: toAdd });
       }
       parentPath = joinRelPath(parentPath, part);

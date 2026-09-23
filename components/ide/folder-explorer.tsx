@@ -10,7 +10,7 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
-  IconPanelLeft,
+  IconPanelLeftClose,
   IconPencil,
   IconRefresh,
   IconTrash,
@@ -89,11 +89,23 @@ function IconBtn({
   );
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+function ExplorerHeader({ onCollapse }: { onCollapse: () => void }) {
   return (
-    <p className="px-3 pt-2 pb-1 font-mono text-[10px] tracking-[0.15em] text-ink-dim uppercase">
-      {children}
-    </p>
+    <div className="flex items-center justify-between gap-1 pr-1.5 pl-3">
+      <p className="py-2 font-mono text-[10px] tracking-[0.15em] text-ink-dim uppercase">
+        Explorer
+      </p>
+      <button
+        type="button"
+        className="rounded p-1 text-ink-dim hover:bg-panel-2 hover:text-amber"
+        title="Hide Explorer"
+        aria-label="Hide Explorer"
+        data-tip="Hide Explorer"
+        onClick={onCollapse}
+      >
+        <IconPanelLeftClose />
+      </button>
+    </div>
   );
 }
 
@@ -115,7 +127,7 @@ function DiskView(props: DiskExplorerProps) {
   } = props;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionLabel>Explorer</SectionLabel>
+      <ExplorerHeader onCollapse={onCollapse} />
       <div className="flex items-center justify-between gap-1 px-2 pb-1">
         <span
           className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink"
@@ -135,9 +147,6 @@ function DiskView(props: DiskExplorerProps) {
           </IconBtn>
           <IconBtn title="Close folder" onClick={onCloseFolder}>
             <IconX />
-          </IconBtn>
-          <IconBtn title="Hide Explorer" onClick={onCollapse}>
-            <IconPanelLeft />
           </IconBtn>
         </span>
       </div>
@@ -194,7 +203,11 @@ function DiskView(props: DiskExplorerProps) {
                     )}
                   </span>
                   {isFolder ? (
-                    <IconFolder className="h-3.5 w-3.5 shrink-0 text-ink-dim" />
+                    isOpen ? (
+                      <IconFolderOpen className="h-3.5 w-3.5 shrink-0 text-amber" />
+                    ) : (
+                      <IconFolder className="h-3.5 w-3.5 shrink-0 text-ink-dim" />
+                    )
                   ) : null}
                   <span className="truncate font-mono">{node.name}</span>
                 </button>
@@ -241,15 +254,10 @@ function DiskView(props: DiskExplorerProps) {
 function EmptyView(props: EmptyExplorerProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionLabel>Explorer</SectionLabel>
+      <ExplorerHeader onCollapse={props.onCollapse} />
       <div className="flex items-center justify-between gap-1 px-2 pb-1">
         <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink">
           No folder open
-        </span>
-        <span className="flex shrink-0 items-center">
-          <IconBtn title="Hide Explorer" onClick={props.onCollapse}>
-            <IconPanelLeft />
-          </IconBtn>
         </span>
       </div>
       <div className="flex flex-col items-start gap-2 px-3 py-2">
@@ -282,7 +290,7 @@ function VirtualView(props: VirtualExplorerProps) {
   } = props;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionLabel>Explorer</SectionLabel>
+      <ExplorerHeader onCollapse={onCollapse} />
       <div className="flex items-center justify-between gap-1 px-2 pb-1">
         <span
           className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink"
@@ -295,7 +303,7 @@ function VirtualView(props: VirtualExplorerProps) {
             <IconFilePlus />
           </IconBtn>
           <IconBtn
-            title="Export project (download all files)"
+            title="Export project as .zip"
             onClick={onExport}
           >
             <IconDownload />
@@ -305,9 +313,6 @@ function VirtualView(props: VirtualExplorerProps) {
             onClick={onOpenFolder}
           >
             <IconFolderOpen />
-          </IconBtn>
-          <IconBtn title="Hide Explorer" onClick={onCollapse}>
-            <IconPanelLeft />
           </IconBtn>
         </span>
       </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Machine } from "@/lib/emulator/machine";
+import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import {
   evaluateWatch,
   loadWatches,
@@ -32,13 +33,15 @@ export function WatchPanel({ machine }: { machine: Machine | null }) {
   };
 
   return (
-    <>
-      <div className="paneltitle flex items-center justify-between gap-2">
-        <span>Watch</span>
+    <CollapsibleSection
+      title="Watch"
+      storageKey="watch"
+      action={
         <span className="text-[10px] normal-case tracking-normal text-ink-dim">
           {watches.length}/{MAX_WATCHES}
         </span>
-      </div>
+      }
+    >
       <div className="border-b border-line bg-panel px-3.5 py-2.5">
         <div className="flex gap-2">
           <input
@@ -106,6 +109,6 @@ export function WatchPanel({ machine }: { machine: Machine | null }) {
           </ul>
         )}
       </div>
-    </>
+    </CollapsibleSection>
   );
 }

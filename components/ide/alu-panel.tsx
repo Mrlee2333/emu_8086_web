@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { Machine } from "@/lib/emulator/machine";
 import { describeAlu } from "@/lib/ide/alu-info";
+import { CollapsibleSection } from "@/components/ide/collapsible-section";
 
 /**
  * ALU internal-operation view (v1.4.0) — mirrors the original Windows
@@ -20,37 +21,36 @@ export function AluPanel({ machine }: { machine: Machine | null }) {
     });
   }, [machine]);
 
-  if (!machine || !info) {
-    return (
-      <section className="border-b border-line px-3 py-2" aria-label="ALU">
-        <h3 className="paneltitle !border-0 !px-0 font-mono text-[11px] tracking-wide text-ink-dim uppercase">
-          ALU
-        </h3>
-        <p className="text-xs text-ink-dim">Assemble to inspect the next operation.</p>
-      </section>
-    );
-  }
-
   return (
-    <section className="border-b border-line px-3 py-2" aria-label="ALU">
-      <h3 className="paneltitle !border-0 !px-0 font-mono text-[11px] tracking-wide text-ink-dim uppercase">
-        ALU {info.isAluOp ? "· active" : "· idle"}
-      </h3>
-      <p className="font-mono text-xs text-ink" title={info.summary}>
-        {info.summary}
-      </p>
-      {info.affectedFlags.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {info.affectedFlags.map((f) => (
-            <span
-              key={f}
-              className="rounded border border-line bg-panel-2 px-1 font-mono text-[10px] text-amber"
-            >
-              {f}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </section>
+    <CollapsibleSection
+      title={info?.isAluOp ? "ALU · active" : "ALU · idle"}
+      storageKey="alu"
+    >
+      <div className="border-b border-line bg-panel px-3.5 py-2.5">
+        {!machine || !info ? (
+          <p className="text-xs text-ink-dim">
+            Assemble to inspect the next operation.
+          </p>
+        ) : (
+          <>
+            <p className="font-mono text-xs text-ink" title={info.summary}>
+              {info.summary}
+            </p>
+            {info.affectedFlags.length > 0 ? (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {info.affectedFlags.map((f) => (
+                  <span
+                    key={f}
+                    className="rounded border border-line bg-panel-2 px-1 font-mono text-[10px] text-amber"
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+    </CollapsibleSection>
   );
 }

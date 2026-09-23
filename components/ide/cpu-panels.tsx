@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Machine } from "@/lib/emulator/machine";
 import { hex4 } from "@/lib/emulator";
 import { flagsToWord } from "@/lib/emulator/flags";
+import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { DialogShell } from "@/components/ide/dialog-shell";
 import { IconCopy } from "@/components/ide/editor-icons";
 
@@ -143,8 +144,7 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
   const ipVal = machine && !machine.halted ? machine.ip : 0;
 
   return (
-    <>
-      <div className="paneltitle">CPU registers</div>
+    <CollapsibleSection title="CPU registers" storageKey="cpu-registers">
       <div className="grid grid-cols-4 gap-px bg-line">
         {order.map((k) => (
           <div key={k} className="bg-panel px-2.5 py-2">
@@ -165,7 +165,7 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
           <div className="mt-0.5 font-mono text-sm text-ink">{hex4(ipVal)}</div>
         </div>
       </div>
-    </>
+    </CollapsibleSection>
   );
 }
 
@@ -194,16 +194,20 @@ export function FlagsPanel({ machine }: RegisterPanelProps) {
 
   return (
     <>
-      <div className="paneltitle flex items-center justify-between gap-2">
-        <span>Flags register</span>
-        <button
-          type="button"
-          className="text-[10px] text-ink-dim hover:text-amber"
-          onClick={() => setDetailsOpen(true)}
-        >
-          Details
-        </button>
-      </div>
+      <CollapsibleSection
+        title="Flags register"
+        storageKey="cpu-flags"
+        action={
+          <button
+            type="button"
+            className="text-[10px] text-ink-dim hover:text-amber"
+            onClick={() => setDetailsOpen(true)}
+            title="Flag meanings and FLAGS word"
+          >
+            Details
+          </button>
+        }
+      >
       <div className="flex flex-wrap gap-2.5 border-b border-line bg-panel px-3.5 py-2.5">
         {names.map((n) => (
           <div
@@ -222,6 +226,7 @@ export function FlagsPanel({ machine }: RegisterPanelProps) {
           </div>
         ))}
       </div>
+      </CollapsibleSection>
 
       {detailsOpen && (
         <DialogShell
@@ -275,16 +280,18 @@ export function StatusLine({ machine }: RegisterPanelProps) {
       : null;
 
   return (
-    <div className="flex gap-4 border-b border-line bg-panel px-3.5 py-2 text-xs text-ink-dim">
-      <span>
-        Current line →{" "}
-        <b className="text-amber">
-          {curInstr ? `line ${curInstr.ln} — ${curInstr.op.toUpperCase()}` : "halted"}
-        </b>
-      </span>
-      <span>
-        Instructions executed: <b className="text-amber">{machine?.steps ?? 0}</b>
-      </span>
-    </div>
+    <CollapsibleSection title="Status" storageKey="cpu-status">
+      <div className="flex gap-4 border-b border-line bg-panel px-3.5 py-2 text-xs text-ink-dim">
+        <span>
+          Current line →{" "}
+          <b className="text-amber">
+            {curInstr ? `line ${curInstr.ln} — ${curInstr.op.toUpperCase()}` : "halted"}
+          </b>
+        </span>
+        <span>
+          Instructions executed: <b className="text-amber">{machine?.steps ?? 0}</b>
+        </span>
+      </div>
+    </CollapsibleSection>
   );
 }

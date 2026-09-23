@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { AssembledProgram } from "@/lib/emulator";
 import type { Machine } from "@/lib/emulator/machine";
+import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { hex2, hex4 } from "@/lib/emulator";
 import {
   countMatches,
@@ -20,20 +21,18 @@ interface MemoryPanelsProps {
 export function DataSegmentPanel({ assembled, machine }: MemoryPanelsProps) {
   if (!assembled || Object.keys(assembled.dataVars).length === 0) {
     return (
-      <>
-        <div className="paneltitle">Data segment</div>
-        <p className="px-3.5 py-4 text-xs text-ink-dim">
+      <CollapsibleSection title="Data segment" storageKey="data-segment">
+        <p className="border-b border-line px-3.5 py-4 text-xs text-ink-dim">
           Assemble a program to see declared variables here.
         </p>
-      </>
+      </CollapsibleSection>
     );
   }
 
   const mem = machine?.mem ?? assembled.mem;
 
   return (
-    <>
-      <div className="paneltitle">Data segment</div>
+    <CollapsibleSection title="Data segment" storageKey="data-segment">
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full border-collapse font-mono text-xs">
           <thead>
@@ -75,7 +74,7 @@ export function DataSegmentPanel({ assembled, machine }: MemoryPanelsProps) {
           </tbody>
         </table>
       </div>
-    </>
+    </CollapsibleSection>
   );
 }
 
@@ -143,9 +142,10 @@ export function HexDumpPanel({
   };
 
   return (
-    <>
-      <div className="paneltitle flex items-center justify-between">
-        <span>Memory dump</span>
+    <CollapsibleSection
+      title="Memory dump"
+      storageKey="memory-dump"
+      action={
         <label className="flex items-center gap-2 text-[10px] font-normal normal-case tracking-normal text-ink-dim">
           Goto
           <input
@@ -164,7 +164,8 @@ export function HexDumpPanel({
             className="w-20 rounded border border-line bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] text-ink"
           />
         </label>
-      </div>
+      }
+    >
       <div className="flex items-center gap-2 border-b border-line/40 bg-panel px-3.5 py-2">
         <input
           type="text"
@@ -233,7 +234,7 @@ export function HexDumpPanel({
           </table>
         )}
       </div>
-    </>
+    </CollapsibleSection>
   );
 }
 
@@ -243,8 +244,8 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
 
   return (
     <>
-      <div className="paneltitle">Stack (PUSH values)</div>
-      <div className="max-h-24 overflow-auto">
+      <CollapsibleSection title="Stack (PUSH values)" storageKey="stack-values">
+      <div className="max-h-24 overflow-auto border-b border-line">
         {dataStack.length === 0 ? (
           <p className="px-3.5 py-3 text-xs text-ink-dim">Empty.</p>
         ) : (
@@ -268,8 +269,9 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
           </table>
         )}
       </div>
-      <div className="paneltitle">Call stack</div>
-      <div className="max-h-20 overflow-auto">
+      </CollapsibleSection>
+      <CollapsibleSection title="Call stack" storageKey="stack-calls">
+      <div className="max-h-20 overflow-auto border-b border-line">
         {callStack.length === 0 ? (
           <p className="px-3.5 py-3 text-xs text-ink-dim">No active calls.</p>
         ) : (
@@ -282,6 +284,7 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
           </ul>
         )}
       </div>
+      </CollapsibleSection>
     </>
   );
 }

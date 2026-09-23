@@ -27,6 +27,9 @@ All notable changes to emu8086web are documented in this file.
 - Tabs behave like VS Code: closing a tab keeps the project file (open tabs persist across reloads); only the Explorer trash deletes from the project
 - Electron opens filesystem-first (Open-folder welcome state, last folder restored) instead of the virtual project
 - Explorer icon buttons show instant hover tooltips; Hide Explorer lives in the panel header with an icon-only rail to reopen
+- Empty folders stay folders (were misbuilt as files, blocking file creation inside); folder icons show open/closed state
+- CPU column panels (registers, flags, ALU, status, watch, data, memory, stacks) collapse via header chevrons
+- Project export is a single `emu8086-project.zip` (dependency-free writer) instead of per-file downloads
 
 ## [1.3.2] — 2026-09-23
 

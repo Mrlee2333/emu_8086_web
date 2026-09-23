@@ -12,7 +12,7 @@ import {
 } from "@/components/ide/cpu-panels";
 import {
   IconCopy,
-  IconPanelLeft,
+  IconPanelLeftOpen,
   IconRedo,
   IconUndo,
 } from "@/components/ide/editor-icons";
@@ -57,6 +57,7 @@ import {
   writeWebFile,
   type WebDirHandle,
 } from "@/lib/ide/fs-access";
+import { createZip } from "@/lib/ide/zip";
 import {
   buildTreeFromPaths,
   createExplorerRoot,
@@ -302,9 +303,7 @@ export function IdeWorkspace() {
         folderBackendRef.current = "electron";
         const name = parsed.name || parsed.root.split("/").pop() || parsed.root;
         setFolderName(name);
-        const tree = buildTreeFromPaths(
-          (entries ?? []).map((e) => e.relPath),
-        );
+        const tree = buildTreeFromPaths(entries ?? []);
         tree.name = name;
         setFolderRoot(tree);
       } catch {
@@ -386,15 +385,14 @@ export function IdeWorkspace() {
         const entries = await window.electronAPI?.listFolder?.(
           electronRootRef.current,
         );
-        const paths = (entries ?? []).map((e) => e.relPath);
-        const root = buildTreeFromPaths(paths);
+        const root = buildTreeFromPaths(entries ?? []);
         root.name = folderName;
         setFolderRoot(root);
         return;
       }
       if (backend === "web" && webDirRef.current) {
         const entries = await listWebFolder(webDirRef.current);
-        const root = buildTreeFromPaths(entries.map((e) => e.relPath));
+        const root = buildTreeFromPaths(entries);
         root.name = folderName;
         setFolderRoot(root);
       }
@@ -413,9 +411,7 @@ export function IdeWorkspace() {
         folderBackendRef.current = "electron";
         setFolderName(picked.name);
         const entries = await window.electronAPI?.listFolder?.(picked.root);
-        const root = buildTreeFromPaths(
-          (entries ?? []).map((e) => e.relPath),
-        );
+        const root = buildTreeFromPaths(entries ?? []);
         root.name = picked.name;
         setFolderRoot(root);
         setSelectedFolderPath(null);
@@ -447,7 +443,7 @@ export function IdeWorkspace() {
     folderBackendRef.current = "web";
     setFolderName(dir.name);
     const entries = await listWebFolder(dir);
-    const root = buildTreeFromPaths(entries.map((e) => e.relPath));
+    const root = buildTreeFromPaths(entries);
     root.name = dir.name;
     setFolderRoot(root);
     setSelectedFolderPath(null);
@@ -902,8 +898,8 @@ export function IdeWorkspace() {
     URL.revokeObjectURL(url);
   };
 
-  /** Overleaf-style project export: download every project file. */
-  const exportProject = async () => {
+  /** Overleaf-style project export: the whole project as one .zip. */
+  const exportProject = () => {
     const snapshot = files.map((f) =>
       f.id === activeId ? { ...f, content: emu.source } : f,
     );
@@ -911,13 +907,26 @@ export function IdeWorkspace() {
       showToast("Nothing to export");
       return;
     }
-    for (let i = 0; i < snapshot.length; i++) {
-      downloadFile(snapshot[i].name, snapshot[i].content);
-      if (i < snapshot.length - 1) {
-        await new Promise((r) => setTimeout(r, 350));
-      }
+    try {
+      const bytes = createZip(
+        snapshot.map((f) => ({
+          name: `emu8086-project/${ensureAsmExtension(f.name)}`,
+          content: f.content,
+        })),
+      );
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/zip",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "emu8086-project.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${snapshot.length} file(s) as .zip`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Export failed");
     }
-    showToast(`Exported ${snapshot.length} file(s)`);
   };
 
   const handleSave = () => {
@@ -1336,7 +1345,7 @@ export function IdeWorkspace() {
             data-tip="Show Explorer"
             onClick={expandSidebar}
           >
-            <IconPanelLeft className="h-4 w-4" />
+            <IconPanelLeftOpen className="h-4 w-4" />
           </button>
         ) : null}
         <div

@@ -99,4 +99,18 @@ describe("workspace-folders tree", () => {
     assert.equal(countNodes({ root }), 4);
     assert.equal(listFiles({ root }).length, 3);
   });
+
+  it("keeps empty folders as folders (not files)", () => {
+    const root = buildTreeFromPaths([
+      { relPath: "examples", isDirectory: true },
+      { relPath: "main.asm", isDirectory: false },
+    ]);
+    const node = findNode({ root, relPath: "examples" });
+    assert.ok(node && node.kind === "folder");
+    // Empty folders expand to zero rows but stay toggleable.
+    assert.equal(
+      flattenVisible({ root, expanded: ["examples"] }).length,
+      2,
+    );
+  });
 });

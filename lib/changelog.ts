@@ -17,6 +17,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "8086 syntax highlighting: registers, mnemonics, directives, labels, numbers, strings, comments (both themes)",
       "ALU panel: live next-operation + affected flags, mirroring the original emu8086 ALU view",
       "In-app name/confirm dialogs (fixes Electron prompt() crash); Overleaf-like virtual project + export in plain browsers",
+      "VS Code tabs, collapsible CPU panels, single-file .zip export, empty-folder fix",
     ],
   },
   {

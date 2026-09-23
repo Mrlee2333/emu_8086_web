@@ -335,6 +335,28 @@ export function IconPanelLeft({ className = "h-3.5 w-3.5" }: IconProps) {
   );
 }
 
+/** Hide-sidebar state (panel open → collapse it). */
+export function IconPanelLeftClose({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <path d="m16 15-3-3 3-3" />
+    </ToolbarSvg>
+  );
+}
+
+/** Show-sidebar state (panel hidden → expand it). */
+export function IconPanelLeftOpen({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <path d="m14 9 3 3-3 3" />
+    </ToolbarSvg>
+  );
+}
+
 export function IconSettings({ className = "h-3.5 w-3.5" }: IconProps) {
   return (
     <ToolbarSvg className={className}>
