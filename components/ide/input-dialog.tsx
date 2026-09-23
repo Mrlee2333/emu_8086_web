@@ -49,25 +49,30 @@ export function InputDialogHost({ request, onResolve }: InputDialogHostProps) {
         title={request.title}
         panelClassName="max-w-sm"
       >
-        <p className="text-sm text-ink">{request.message}</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            className="btn"
-            autoFocus={request.danger === true}
-            onClick={() => close(null)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            autoFocus={request.danger !== true}
-            className={`btn ${request.danger ? "btn-danger" : "btn-primary"}`}
-            onClick={() => close(true)}
-          >
-            {request.confirmLabel ?? "Confirm"}
-          </button>
-        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            close(true);
+          }}
+        >
+          <p className="text-sm text-ink">{request.message}</p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => close(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              autoFocus
+              className={`btn ${request.danger ? "btn-danger" : "btn-primary"}`}
+            >
+              {request.confirmLabel ?? "Confirm"}
+            </button>
+          </div>
+        </form>
       </DialogShell>
     );
   }
