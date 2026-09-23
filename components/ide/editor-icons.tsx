@@ -226,6 +226,115 @@ export function IconChevronDown({ className = "h-3 w-3" }: IconProps) {
   );
 }
 
+/** VS Code-style explorer icons (v1.4.0 folder workspace). */
+export function IconFilePlus({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="12" y1="18" x2="12" y2="12" />
+      <line x1="9" y1="15" x2="15" y2="15" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconFolderPlus({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      <line x1="12" y1="11" x2="12" y2="17" />
+      <line x1="9" y1="14" x2="15" y2="14" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconRefresh({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconX({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconPencil({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconTrash({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconDownload({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconFile({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconFolder({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconChevronRight({ className = "h-3 w-3" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <polyline points="9 18 15 12 9 6" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconChevronDownSm({ className = "h-3 w-3" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <polyline points="6 9 12 15 18 9" />
+    </ToolbarSvg>
+  );
+}
+
+export function IconPanelLeft({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <ToolbarSvg className={className}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </ToolbarSvg>
+  );
+}
+
 export function IconSettings({ className = "h-3.5 w-3.5" }: IconProps) {
   return (
     <ToolbarSvg className={className}>

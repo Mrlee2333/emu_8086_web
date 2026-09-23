@@ -10,9 +10,18 @@ import {
   RegisterPanel,
   StatusLine,
 } from "@/components/ide/cpu-panels";
-import { IconCopy, IconRedo, IconUndo } from "@/components/ide/editor-icons";
+import {
+  IconCopy,
+  IconPanelLeft,
+  IconRedo,
+  IconUndo,
+} from "@/components/ide/editor-icons";
 import { FileTabs } from "@/components/ide/file-tabs";
 import { FolderExplorer } from "@/components/ide/folder-explorer";
+import {
+  InputDialogHost,
+  type DialogRequest,
+} from "@/components/ide/input-dialog";
 import { OPEN_HELP_EVENT } from "@/components/ide/help-menu";
 import {
   DataSegmentPanel,
@@ -54,6 +63,7 @@ import {
   createFolderNode,
   findNode,
   flattenVisible,
+  isValidSegment,
   SIDEBAR_COLLAPSED_KEY,
   SIDEBAR_EXPANDED_KEY,
   type ExplorerRoot,
@@ -107,6 +117,42 @@ export function IdeWorkspace() {
   const webDirRef = useRef<WebDirHandle | null>(null);
   const folderBackendRef = useRef<"electron" | "web" | null>(null);
   const folderPathByFileIdRef = useRef<Map<string, string>>(new Map());
+  // In-app dialogs (window.prompt/confirm throw in Electron).
+  const [dialog, setDialog] = useState<{
+    req: DialogRequest;
+    id: number;
+  } | null>(null);
+  const dialogResolveRef = useRef<
+    ((value: string | boolean | null) => void) | null
+  >(null);
+  const dialogSeqRef = useRef(0);
+
+  const resolveDialog = useCallback((value: string | boolean | null) => {
+    dialogResolveRef.current?.(value);
+    dialogResolveRef.current = null;
+    setDialog(null);
+  }, []);
+
+  const askInput = useCallback(
+    (req: Extract<DialogRequest, { kind: "input" }>) =>
+      new Promise<string | null>((resolve) => {
+        dialogResolveRef.current = (v) =>
+          resolve(typeof v === "string" ? v : null);
+        dialogSeqRef.current += 1;
+        setDialog({ req, id: dialogSeqRef.current });
+      }),
+    [],
+  );
+
+  const askConfirm = useCallback(
+    (req: Extract<DialogRequest, { kind: "confirm" }>) =>
+      new Promise<boolean>((resolve) => {
+        dialogResolveRef.current = (v) => resolve(v === true);
+        dialogSeqRef.current += 1;
+        setDialog({ req, id: dialogSeqRef.current });
+      }),
+    [],
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorWrapRef = useRef<HTMLDivElement>(null);
@@ -432,10 +478,18 @@ export function IdeWorkspace() {
         showToast("Open a folder first");
         return;
       }
-      const raw = window.prompt(
-        isDirectory ? "New folder name" : "New file name",
-        isDirectory ? "examples" : "program.asm",
-      );
+      const raw = await askInput({
+        kind: "input",
+        title: isDirectory ? "New folder" : "New file",
+        label: isDirectory ? "Folder name" : "File name",
+        initialValue: isDirectory ? "examples" : "program.asm",
+        confirmLabel: "Create",
+        validate: (v) => {
+          if (!v) return "Name cannot be empty";
+          if (!isValidSegment(v)) return "Invalid name";
+          return null;
+        },
+      });
       if (!raw) return;
       try {
         let rel = "";
@@ -482,13 +536,35 @@ export function IdeWorkspace() {
         showToast(e instanceof Error ? e.message : "Create failed");
       }
     },
-    [refreshFolder, openFolderFile, showToast],
+    [refreshFolder, openFolderFile, showToast, askInput],
   );
 
   const renameInFolder = useCallback(
-    async (relPath: string, newName: string) => {
+    async (relPath: string) => {
       const backend = folderBackendRef.current;
       if (!backend) return;
+      const node = findNode({
+        root: folderRoot ?? createExplorerRoot(),
+        relPath,
+      });
+      if (!node || node.kind === undefined) {
+        showToast("Path not found");
+        return;
+      }
+      const isFile = node.kind === "file";
+      const newName = await askInput({
+        kind: "input",
+        title: isFile ? "Rename file" : "Rename folder",
+        label: "New name",
+        initialValue: node.name,
+        confirmLabel: "Rename",
+        validate: (v) => {
+          if (!v) return "Name cannot be empty";
+          if (!isValidSegment(v)) return "Invalid name";
+          return null;
+        },
+      });
+      if (!newName || newName === node.name) return;
       try {
         const parent = relPath.includes("/")
           ? relPath.slice(0, relPath.lastIndexOf("/"))
@@ -542,14 +618,21 @@ export function IdeWorkspace() {
         showToast(e instanceof Error ? e.message : "Rename failed");
       }
     },
-    [folderRoot, refreshFolder, showToast],
+    [folderRoot, refreshFolder, showToast, askInput],
   );
 
   const deleteInFolder = useCallback(
     async (relPath: string) => {
       const backend = folderBackendRef.current;
       if (!backend) return;
-      if (!window.confirm(`Delete ${relPath}?`)) return;
+      const ok = await askConfirm({
+        kind: "confirm",
+        title: "Delete",
+        message: `Delete ${relPath}? This cannot be undone.`,
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       try {
         if (backend === "electron" && electronRootRef.current) {
           await window.electronAPI?.deleteFolderEntry?.(
@@ -576,7 +659,7 @@ export function IdeWorkspace() {
         showToast("Delete failed");
       }
     },
-    [refreshFolder, showToast],
+    [refreshFolder, showToast, askConfirm],
   );
 
   const updateActiveContent = (content: string) => {
@@ -602,11 +685,21 @@ export function IdeWorkspace() {
     lastSynced.current = id;
   };
 
-  const newFile = () => {
-    const name = ensureAsmExtension(
-      window.prompt("New file name", `untitled${files.length + 1}.asm`) ??
-        `untitled${files.length + 1}.asm`,
-    );
+  const newFile = async (suggestedName?: string) => {
+    const raw = await askInput({
+      kind: "input",
+      title: "New file",
+      label: "File name",
+      initialValue: suggestedName ?? `untitled${files.length + 1}.asm`,
+      confirmLabel: "Create",
+      validate: (v) => {
+        if (!v) return "Name cannot be empty";
+        if (!isValidSegment(v)) return "Invalid file name";
+        return null;
+      },
+    });
+    if (!raw) return;
+    const name = ensureAsmExtension(raw);
     const file = createDefaultFile(name);
     file.content = `; ${name}\n.model small\n.stack 100h\n.data\n.code\nmain proc\n    mov ah, 4ch\n    int 21h\nmain endp\nend main\n`;
     setFiles((prev) => {
@@ -637,12 +730,41 @@ export function IdeWorkspace() {
     }
   };
 
-  const renameFile = (id: string, name: string) => {
+  const renameFile = async (id: string) => {
+    const current = files.find((f) => f.id === id);
+    if (!current) return;
+    const raw = await askInput({
+      kind: "input",
+      title: "Rename file",
+      label: "File name",
+      initialValue: current.name,
+      confirmLabel: "Rename",
+      validate: (v) => {
+        if (!v) return "Name cannot be empty";
+        if (!isValidSegment(v)) return "Invalid file name";
+        return null;
+      },
+    });
+    if (!raw) return;
+    const name = ensureAsmExtension(raw);
     setFiles((prev) =>
       prev.map((f) =>
-        f.id === id ? { ...f, name: ensureAsmExtension(name), dirty: true } : f,
+        f.id === id ? { ...f, name, dirty: true } : f,
       ),
     );
+  };
+
+  const deleteVirtualFile = async (id: string) => {
+    const target = files.find((f) => f.id === id);
+    const ok = await askConfirm({
+      kind: "confirm",
+      title: "Delete file",
+      message: `Delete ${target?.name ?? "this file"} from the project? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    closeFile(id);
   };
 
   const handleOpen = () => fileInputRef.current?.click();
@@ -704,6 +826,24 @@ export function IdeWorkspace() {
     URL.revokeObjectURL(url);
   };
 
+  /** Overleaf-style project export: download every project file. */
+  const exportProject = async () => {
+    const snapshot = files.map((f) =>
+      f.id === activeId ? { ...f, content: emu.source } : f,
+    );
+    if (snapshot.length === 0) {
+      showToast("Nothing to export");
+      return;
+    }
+    for (let i = 0; i < snapshot.length; i++) {
+      downloadFile(snapshot[i].name, snapshot[i].content);
+      if (i < snapshot.length - 1) {
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    }
+    showToast(`Exported ${snapshot.length} file(s)`);
+  };
+
   const handleSave = () => {
     if (!active) {
       showToast("No file open");
@@ -757,12 +897,23 @@ export function IdeWorkspace() {
     showToast(`Saved ${active.name}`);
   };
 
-  const handleSaveAs = () => {
+  const handleSaveAs = async () => {
     if (!active) {
       showToast("No file open");
       return;
     }
-    const name = window.prompt("Save as filename", active.name);
+    const name = await askInput({
+      kind: "input",
+      title: "Save as",
+      label: "File name",
+      initialValue: active.name,
+      confirmLabel: "Save",
+      validate: (v) => {
+        if (!v) return "Name cannot be empty";
+        if (!isValidSegment(v)) return "Invalid file name";
+        return null;
+      },
+    });
     if (!name) return;
     const finalName = ensureAsmExtension(name);
     downloadFile(finalName, emu.source);
@@ -821,7 +972,7 @@ export function IdeWorkspace() {
   const menuHandlers = useRef<Record<string, () => void>>({});
   useEffect(() => {
     menuHandlers.current = {
-      "file:new": () => newFile(),
+      "file:new": () => void newFile(),
       "file:open": () => handleOpen(),
       "file:open-folder": () => void openFolder(),
       "file:close-folder": () => closeFolder(),
@@ -997,9 +1148,43 @@ export function IdeWorkspace() {
     };
   });
 
+  const explorer = !sidebarCollapsed ? (
+    <div className="max-h-44 min-h-0 shrink-0 overflow-hidden border-b border-line bg-panel lg:max-h-none lg:w-60 lg:border-r lg:border-b-0">
+      {folderRoot ? (
+        <FolderExplorer
+          mode="disk"
+          rootName={folderName}
+          rows={folderRows}
+          expanded={expandedPaths}
+          selectedPath={selectedFolderPath}
+          onToggleFolder={toggleFolder}
+          onOpenFile={(rel) => void openFolderFile(rel)}
+          onNewFile={(parent) => void createInFolder(parent, false)}
+          onNewFolder={(parent) => void createInFolder(parent, true)}
+          onRename={(rel) => void renameInFolder(rel)}
+          onDelete={(rel) => void deleteInFolder(rel)}
+          onRefresh={() => void refreshFolder()}
+          onCloseFolder={closeFolder}
+        />
+      ) : (
+        <FolderExplorer
+          mode="virtual"
+          files={files}
+          activeId={activeId}
+          onSelect={selectFile}
+          onNewFile={() => void newFile()}
+          onRename={(id) => void renameFile(id)}
+          onDelete={(id) => void deleteVirtualFile(id)}
+          onExport={() => void exportProject()}
+          onOpenFolder={() => void openFolder()}
+        />
+      )}
+    </div>
+  ) : null;
+
   return (
     <div
-      className="grid h-dvh max-h-dvh grid-rows-[auto_auto_1fr] overflow-hidden bg-bg"
+      className="grid h-dvh max-h-dvh grid-rows-[auto_1fr] overflow-hidden bg-bg"
       style={{ paddingBottom: "var(--ad-anchor-pad, 0px)" }}
     >
       <WebMcpBootstrap />
@@ -1044,80 +1229,66 @@ export function IdeWorkspace() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <FileTabs
-        files={files}
-        activeId={activeId}
-        onSelect={selectFile}
-        onClose={closeFile}
-        onNew={newFile}
-        onRename={renameFile}
-      />
-
-      {!hasFiles ? (
-        <div className="flex min-h-0 flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
-          <p className="font-mono text-lg text-amber">No file open</p>
-          <p className="max-w-sm text-sm text-ink-dim">
-            Create a new assembly file or open an existing `.asm` to start
-            coding.
-          </p>
-          <div className="flex flex-wrap justify-center gap-2">
-            <button type="button" className="btn btn-primary" onClick={newFile}>
-              New file
-            </button>
-            <button type="button" className="btn" onClick={handleOpen}>
-              Open file…
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div
-          ref={splitRef}
-          className="flex min-h-0 flex-col overflow-hidden lg:flex-row"
+      <div
+        ref={splitRef}
+        className="flex min-h-0 flex-col overflow-hidden lg:flex-row"
+      >
+        {explorer}
+        <button
+          type="button"
+          className="flex shrink-0 items-center justify-center gap-1 border-b border-line bg-panel px-1.5 py-1 text-ink-dim hover:text-amber lg:w-6 lg:flex-col lg:gap-2 lg:border-r lg:border-b-0 lg:py-2"
+          title={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
+          aria-label={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
+          aria-expanded={!sidebarCollapsed}
+          onClick={() => setSidebarCollapsed((c) => !c)}
         >
-          <div
-            className="flex min-h-0 min-w-0 flex-col bg-bg lg:flex-row"
-            style={{
-              flex: `0 0 ${leftPct}%`,
-              maxWidth: "100%",
-            }}
-          >
-            {!sidebarCollapsed ? (
-              <div className="max-h-44 min-h-0 shrink-0 overflow-hidden border-b border-line bg-panel lg:max-h-none lg:w-56 lg:border-r lg:border-b-0">
-                <FolderExplorer
-                  rootName={folderName}
-                  rows={folderRows}
-                  expanded={expandedPaths}
-                  selectedPath={selectedFolderPath}
-                  onToggleFolder={toggleFolder}
-                  onOpenFile={(rel) => void openFolderFile(rel)}
-                  onNewFile={(parent) => void createInFolder(parent, false)}
-                  onNewFolder={(parent) => void createInFolder(parent, true)}
-                  onRename={(rel, name) => void renameInFolder(rel, name)}
-                  onDelete={(rel) => void deleteInFolder(rel)}
-                  onRefresh={() => void refreshFolder()}
-                  onCloseFolder={closeFolder}
-                  onOpenFolder={() => void openFolder()}
-                />
+          <IconPanelLeft className="h-3.5 w-3.5" />
+          <span className="font-mono text-[10px] tracking-wider uppercase lg:[writing-mode:vertical-lr]">
+            {sidebarCollapsed ? "Explorer" : "Hide"}
+          </span>
+        </button>
+        <div
+          className="flex min-h-0 min-w-0 flex-col bg-bg"
+          style={{
+            flex: `0 0 ${leftPct}%`,
+            maxWidth: "100%",
+          }}
+        >
+          {!hasFiles ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
+              <p className="font-mono text-lg text-amber">No file open</p>
+              <p className="max-w-sm text-sm text-ink-dim">
+                Create a new assembly file or open an existing `.asm` to
+                start coding.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void newFile()}
+                >
+                  New file
+                </button>
+                <button type="button" className="btn" onClick={handleOpen}>
+                  Open file…
+                </button>
               </div>
-            ) : null}
-            <button
-              type="button"
-              className="flex shrink-0 items-center justify-center border-b border-line bg-panel px-1 py-0.5 text-[10px] text-ink-dim hover:text-amber lg:w-5 lg:flex-col lg:border-r lg:border-b-0 lg:py-2"
-              title={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
-              aria-label={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
-              aria-expanded={!sidebarCollapsed}
-              onClick={() => setSidebarCollapsed((c) => !c)}
-            >
-              <span className="lg:[writing-mode:vertical-lr]">
-                {sidebarCollapsed ? "▶ Explorer" : "◀ Hide"}
-              </span>
-            </button>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div
-              ref={editorWrapRef}
-              className="flex min-h-0 flex-col overflow-hidden"
-              style={{ flex: `0 0 ${editorPct}%` }}
-            >
+            </div>
+          ) : (
+            <>
+              <FileTabs
+                files={files}
+                activeId={activeId}
+                onSelect={selectFile}
+                onClose={closeFile}
+                onNew={() => void newFile()}
+                onRename={(id) => void renameFile(id)}
+              />
+              <div
+                ref={editorWrapRef}
+                className="flex min-h-0 flex-col overflow-hidden"
+                style={{ flex: `0 0 ${editorPct}%` }}
+              >
               <div className="paneltitle flex shrink-0 items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-2 truncate">
                   <span className="truncate">
@@ -1199,12 +1370,13 @@ export function IdeWorkspace() {
                 theme={emu.theme}
               />
             </div>
-            </div>
-          </div>
+            </>
+          )}
+        </div>
 
-          <div className="hidden lg:flex">
-            <ResizeHandle direction="horizontal" onDrag={onHorizontalDrag} />
-          </div>
+        <div className="hidden lg:flex">
+          <ResizeHandle direction="horizontal" onDrag={onHorizontalDrag} />
+        </div>
 
           <div
             className={`min-h-0 min-w-0 overflow-auto bg-bg ${
@@ -1238,8 +1410,7 @@ export function IdeWorkspace() {
               </div>
             ) : null}
           </div>
-        </div>
-      )}
+      </div>
 
       <SettingsModal
         open={settingsOpen}
@@ -1257,6 +1428,13 @@ export function IdeWorkspace() {
         source={emu.source}
         onToast={showToast}
       />
+      {dialog ? (
+        <InputDialogHost
+          key={dialog.id}
+          request={dialog.req}
+          onResolve={resolveDialog}
+        />
+      ) : null}
       {isAdsEnabled() ? <AdSenseAnchor slot={AD_SLOTS.banner1} /> : null}
       <Toast message={toast} />
     </div>

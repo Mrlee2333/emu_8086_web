@@ -20,6 +20,11 @@ All notable changes to emu8086web are documented in this file.
 
 - Folder IPC validates every relPath (no traversal, absolute, drive-letter, or control-char paths) and resolves inside the opened root before any fs call
 
+### Fixed
+
+- Replaced `window.prompt()` / `window.confirm()` with in-app dialogs — `prompt()` throws in Electron, which crashed New file/folder, rename, delete, and Save-as flows
+- Browsers without a disk folder now get an Overleaf-like virtual project in the Explorer (create/rename/delete multiple files, export all) instead of an empty panel
+
 ## [1.3.2] — 2026-09-23
 
 ### Added

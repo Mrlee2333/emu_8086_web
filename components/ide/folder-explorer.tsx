@@ -1,8 +1,24 @@
 "use client";
 
+import type { ReactNode } from "react";
+import {
+  IconChevronDownSm,
+  IconChevronRight,
+  IconDownload,
+  IconFile,
+  IconFilePlus,
+  IconFolder,
+  IconFolderOpen,
+  IconFolderPlus,
+  IconPencil,
+  IconRefresh,
+  IconTrash,
+  IconX,
+} from "@/components/ide/editor-icons";
 import type { VisibleRow } from "@/lib/ide/workspace-folders";
 
-interface FolderExplorerProps {
+type DiskExplorerProps = {
+  mode: "disk";
   rootName: string;
   rows: VisibleRow[];
   expanded: Set<string>;
@@ -11,96 +27,106 @@ interface FolderExplorerProps {
   onOpenFile: (relPath: string) => void;
   onNewFile: (parentPath: string) => void;
   onNewFolder: (parentPath: string) => void;
-  onRename: (relPath: string, newName: string) => void;
+  onRename: (relPath: string) => void;
   onDelete: (relPath: string) => void;
   onRefresh: () => void;
   onCloseFolder: () => void;
+};
+
+type VirtualExplorerProps = {
+  mode: "virtual";
+  files: { id: string; name: string; dirty: boolean }[];
+  activeId: string;
+  onSelect: (id: string) => void;
+  onNewFile: () => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
+  onExport: () => void;
   onOpenFolder: () => void;
+};
+
+export type FolderExplorerProps = DiskExplorerProps | VirtualExplorerProps;
+
+function IconBtn({
+  title,
+  onClick,
+  danger,
+  children,
+}: {
+  title: string;
+  onClick: (e: React.MouseEvent) => void;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`rounded p-1 text-ink-dim hover:bg-panel-2 hover:text-amber ${
+        danger ? "hover:!text-red" : ""
+      }`}
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
 }
 
-function fileIcon(name: string): string {
-  const low = name.toLowerCase();
-  if (low.endsWith(".asm")) return "◈";
-  if (low.endsWith(".inc")) return "◇";
-  return "≡";
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="px-3 pt-2 pb-1 font-mono text-[10px] tracking-[0.15em] text-ink-dim uppercase">
+      {children}
+    </p>
+  );
 }
 
-export function FolderExplorer({
-  rootName,
-  rows,
-  expanded,
-  selectedPath,
-  onToggleFolder,
-  onOpenFile,
-  onNewFile,
-  onNewFolder,
-  onRename,
-  onDelete,
-  onRefresh,
-  onCloseFolder,
-  onOpenFolder,
-}: FolderExplorerProps) {
-  if (!rootName) {
-    return (
-      <div className="flex h-full flex-col items-start gap-2 p-3 text-xs text-ink-dim">
-        <p className="font-mono text-[11px] tracking-wide text-ink-dim uppercase">
-          Explorer
-        </p>
-        <p>No folder open. Open a directory to browse .asm files like VS Code.</p>
-        <button type="button" className="btn btn-primary" onClick={onOpenFolder}>
-          Open folder…
-        </button>
-      </div>
-    );
-  }
-
+function DiskView(props: DiskExplorerProps) {
+  const {
+    rootName,
+    rows,
+    expanded,
+    selectedPath,
+    onToggleFolder,
+    onOpenFile,
+    onNewFile,
+    onNewFolder,
+    onRename,
+    onDelete,
+    onRefresh,
+    onCloseFolder,
+  } = props;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between gap-1 border-b border-line px-2 py-1.5">
-        <span className="truncate font-mono text-[11px] tracking-wide text-ink-dim uppercase">
+      <SectionLabel>Explorer</SectionLabel>
+      <div className="flex items-center justify-between gap-1 px-2 pb-1">
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink"
+          title={rootName}
+        >
           {rootName}
         </span>
-        <span className="flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            className="btn btn-icon !px-1.5 !py-1"
-            title="New file in folder root"
-            aria-label="New file"
-            onClick={() => onNewFile("")}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon !px-1.5 !py-1"
-            title="New subfolder"
-            aria-label="New folder"
-            onClick={() => onNewFolder("")}
-          >
-            ⧉
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon !px-1.5 !py-1"
-            title="Refresh folder"
-            aria-label="Refresh folder"
-            onClick={onRefresh}
-          >
-            ↻
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon !px-1.5 !py-1"
-            title="Close folder"
-            aria-label="Close folder"
-            onClick={onCloseFolder}
-          >
-            ×
-          </button>
+        <span className="flex shrink-0 items-center">
+          <IconBtn title="New file" onClick={() => onNewFile("")}>
+            <IconFilePlus />
+          </IconBtn>
+          <IconBtn title="New folder" onClick={() => onNewFolder("")}>
+            <IconFolderPlus />
+          </IconBtn>
+          <IconBtn title="Refresh explorer" onClick={onRefresh}>
+            <IconRefresh />
+          </IconBtn>
+          <IconBtn title="Close folder" onClick={onCloseFolder}>
+            <IconX />
+          </IconBtn>
         </span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Folder contents">
+      <div
+        className="min-h-0 flex-1 overflow-auto pb-2"
+        role="tree"
+        aria-label="Folder contents"
+      >
         {rows.length === 0 ? (
           <p className="px-3 py-2 text-xs text-ink-dim">
             Empty folder — create a .asm file to start.
@@ -116,8 +142,10 @@ export function FolderExplorer({
                 role="treeitem"
                 aria-expanded={isFolder ? isOpen : undefined}
                 aria-selected={selected}
-                className={`group flex items-center gap-1 pr-1 text-xs ${
-                  selected ? "bg-[var(--highlight)] text-amber" : "text-ink hover:bg-panel-2"
+                className={`group flex items-center gap-0.5 pr-1 text-xs ${
+                  selected
+                    ? "bg-[var(--highlight)] text-amber"
+                    : "text-ink hover:bg-panel-2"
                 }`}
                 style={{ paddingLeft: `${8 + depth * 14}px` }}
               >
@@ -125,64 +153,61 @@ export function FolderExplorer({
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-1 text-left"
                   onClick={() =>
-                    isFolder ? onToggleFolder(node.relPath) : onOpenFile(node.relPath)
+                    isFolder
+                      ? onToggleFolder(node.relPath)
+                      : onOpenFile(node.relPath)
                   }
                   onDoubleClick={() => {
-                    if (!isFolder) return;
-                    const next = window.prompt("Rename folder", node.name);
-                    if (next && next !== node.name) onRename(node.relPath, next);
+                    if (isFolder) onToggleFolder(node.relPath);
                   }}
                   title={node.relPath}
                 >
-                  <span className="w-3 shrink-0 text-[10px] text-ink-dim">
-                    {isFolder ? (isOpen ? "▾" : "▸") : fileIcon(node.name)}
+                  <span className="flex w-4 shrink-0 items-center text-ink-dim">
+                    {isFolder ? (
+                      isOpen ? (
+                        <IconChevronDownSm />
+                      ) : (
+                        <IconChevronRight />
+                      )
+                    ) : (
+                      <IconFile className="h-3.5 w-3.5" />
+                    )}
                   </span>
+                  {isFolder ? (
+                    <IconFolder className="h-3.5 w-3.5 shrink-0 text-ink-dim" />
+                  ) : null}
                   <span className="truncate font-mono">{node.name}</span>
                 </button>
-                <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                <span className="hidden shrink-0 items-center group-hover:flex">
                   {isFolder ? (
                     <>
-                      <button
-                        type="button"
-                        className="rounded px-1 text-ink-dim hover:text-amber"
+                      <IconBtn
                         title={`New file in ${node.name}`}
                         onClick={() => onNewFile(node.relPath)}
                       >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded px-1 text-ink-dim hover:text-amber"
-                        title={`New subfolder in ${node.name}`}
+                        <IconFilePlus />
+                      </IconBtn>
+                      <IconBtn
+                        title={`New folder in ${node.name}`}
                         onClick={() => onNewFolder(node.relPath)}
                       >
-                        ⧉
-                      </button>
+                        <IconFolderPlus />
+                      </IconBtn>
                     </>
                   ) : null}
-                  <button
-                    type="button"
-                    className="rounded px-1 text-ink-dim hover:text-amber"
-                    title="Rename"
-                    onClick={() => {
-                      const next = window.prompt(
-                        `Rename ${node.name}`,
-                        node.name,
-                      );
-                      if (next && next !== node.name)
-                        onRename(node.relPath, next);
-                    }}
+                  <IconBtn
+                    title={`Rename ${node.name}`}
+                    onClick={() => onRename(node.relPath)}
                   >
-                    ✎
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded px-1 text-ink-dim hover:text-red"
-                    title="Delete"
+                    <IconPencil />
+                  </IconBtn>
+                  <IconBtn
+                    title={`Delete ${node.name}`}
+                    danger
                     onClick={() => onDelete(node.relPath)}
                   >
-                    ⌫
-                  </button>
+                    <IconTrash />
+                  </IconBtn>
                 </span>
               </div>
             );
@@ -191,4 +216,118 @@ export function FolderExplorer({
       </div>
     </div>
   );
+}
+
+function VirtualView(props: VirtualExplorerProps) {
+  const {
+    files,
+    activeId,
+    onSelect,
+    onNewFile,
+    onRename,
+    onDelete,
+    onExport,
+    onOpenFolder,
+  } = props;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionLabel>Explorer</SectionLabel>
+      <div className="flex items-center justify-between gap-1 px-2 pb-1">
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink"
+          title="Browser project — stored on this device"
+        >
+          Project
+        </span>
+        <span className="flex shrink-0 items-center">
+          <IconBtn title="New file" onClick={onNewFile}>
+            <IconFilePlus />
+          </IconBtn>
+          <IconBtn
+            title="Export project (download all files)"
+            onClick={onExport}
+          >
+            <IconDownload />
+          </IconBtn>
+          <IconBtn
+            title="Open folder (desktop app or Chrome/Edge)"
+            onClick={onOpenFolder}
+          >
+            <IconFolderOpen />
+          </IconBtn>
+        </span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto pb-2" role="tree" aria-label="Project files">
+        {files.length === 0 ? (
+          <div className="flex flex-col items-start gap-2 px-3 py-2">
+            <p className="text-xs text-ink-dim">
+              No files yet — create one to start coding.
+            </p>
+            <button type="button" className="btn btn-primary" onClick={onNewFile}>
+              New file
+            </button>
+          </div>
+        ) : (
+          files.map((f) => {
+            const selected = f.id === activeId;
+            return (
+              <div
+                key={f.id}
+                role="treeitem"
+                aria-selected={selected}
+                className={`group flex items-center gap-0.5 py-0.5 pr-1 pl-3 text-xs ${
+                  selected
+                    ? "bg-[var(--highlight)] text-amber"
+                    : "text-ink hover:bg-panel-2"
+                }`}
+              >
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-0.5 text-left"
+                  onClick={() => onSelect(f.id)}
+                  title={`${f.name} (double-click to rename)`}
+                  onDoubleClick={() => onRename(f.id)}
+                >
+                  <IconFile className="h-3.5 w-3.5 shrink-0 text-ink-dim" />
+                  <span className="truncate font-mono">
+                    {f.dirty ? "• " : ""}
+                    {f.name}
+                  </span>
+                </button>
+                <span className="hidden shrink-0 items-center group-hover:flex">
+                  <IconBtn
+                    title={`Rename ${f.name}`}
+                    onClick={() => onRename(f.id)}
+                  >
+                    <IconPencil />
+                  </IconBtn>
+                  <IconBtn
+                    title={`Delete ${f.name}`}
+                    danger
+                    onClick={() => onDelete(f.id)}
+                  >
+                    <IconTrash />
+                  </IconBtn>
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <p className="border-t border-line px-3 py-1.5 text-[10px] text-ink-dim">
+        Browser project — files stay on this device.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * VS Code-style Explorer (v1.4.0): disk-folder tree on desktop/Chromium,
+ * Overleaf-like virtual project in plain browsers. All destructive and
+ * name inputs go through in-app dialogs (prompt() throws in Electron).
+ */
+export function FolderExplorer(props: FolderExplorerProps) {
+  if (props.mode === "disk") return <DiskView {...props} />;
+  return <VirtualView {...props} />;
 }

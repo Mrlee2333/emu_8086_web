@@ -16,6 +16,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Folder-backed Save: Ctrl+S writes straight back to disk instead of downloading",
       "8086 syntax highlighting: registers, mnemonics, directives, labels, numbers, strings, comments (both themes)",
       "ALU panel: live next-operation + affected flags, mirroring the original emu8086 ALU view",
+      "In-app name/confirm dialogs (fixes Electron prompt() crash); Overleaf-like virtual project + export in plain browsers",
     ],
   },
   {
