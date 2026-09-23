@@ -682,7 +682,9 @@ export function IdeWorkspace() {
               parentHandle = await parentHandle.getDirectoryHandle(part);
             }
             const srcHandle = await parentHandle.getDirectoryHandle(leaf);
-            await copyWebTree(srcHandle, dir, base);
+            // Rename ≠ move: copy into the SAME parent under the new name
+            // (FS handles reject "/" in entry names, so `base` can't be used).
+            await copyWebTree(srcHandle, parentHandle, clean);
           }
           const parts = relPath.split("/").filter(Boolean);
           const leaf = parts.pop() ?? "";
@@ -736,6 +738,8 @@ export function IdeWorkspace() {
           await current.removeEntry(leaf, { recursive: true });
         }
         // Close mapped tabs and drop their buffers (no ghost files).
+        // A deleted active tab falls back to a surviving sibling (closeTab
+        // semantics); the editor clears only when no tabs remain.
         const doomed: string[] = [];
         for (const [id, p] of [...folderPathByFileIdRef.current]) {
           if (p === relPath || p.startsWith(`${relPath}/`)) {
@@ -744,12 +748,16 @@ export function IdeWorkspace() {
           }
         }
         if (doomed.length > 0) {
-          setOpenIds((prev) => prev.filter((id) => !doomed.includes(id)));
+          const remaining = openIds.filter((id) => !doomed.includes(id));
+          setOpenIds(remaining);
           setFiles((prev) => prev.filter((f) => !doomed.includes(f.id)));
           if (activeId && doomed.includes(activeId)) {
-            setActiveId("");
+            const fallback =
+              remaining[Math.max(0, openIds.indexOf(activeId) - 1)] ?? "";
+            setActiveId(fallback);
             lastSynced.current = null;
-            emu.setSource("");
+            // emu.source for the fallback syncs via the active-id effect.
+            if (!fallback) emu.setSource("");
           }
         }
         persistFolderMap();
@@ -759,8 +767,8 @@ export function IdeWorkspace() {
         showToast("Delete failed");
       }
     },
-    // emu identity changes every render; depending on it keeps this fresh.
-    [refreshFolder, showToast, askConfirm, activeId, emu],
+    // emu/openIds identities change often; depending on them keeps this fresh.
+    [refreshFolder, showToast, askConfirm, activeId, openIds, emu],
   );
 
   const updateActiveContent = (content: string) => {
