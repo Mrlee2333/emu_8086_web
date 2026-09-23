@@ -40,6 +40,7 @@ const MNEMONICS = new Set([
   "movsb", "movsw", "stosb", "stosw", "lodsb", "lodsw",
   "cmpsb", "cmpsw", "scasb", "scasw", "rep", "repe", "repne",
   "in", "out", "test",
+  "aaa", "aas", "daa", "das", "aam", "aad",
 ]);
 
 const DIRECTIVES = new Set([

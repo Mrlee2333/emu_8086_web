@@ -140,6 +140,39 @@ export async function createWebEntry(
 }
 
 /**
+ * True when a file or directory already exists at `relPath` (probe without
+ * `create`, so renames can refuse to merge/overwrite before touching disk).
+ */
+export async function webEntryExists(
+  root: WebDirHandle,
+  relPath: string,
+): Promise<boolean> {
+  const parts = relPath.split("/").filter(Boolean);
+  const leaf = parts.pop() ?? "";
+  if (!leaf) return false;
+  try {
+    let current = root;
+    for (const part of parts) {
+      current = await current.getDirectoryHandle(part);
+    }
+    await current.getFileHandle(leaf);
+    return true;
+  } catch {
+    /* not a file — check directory */
+  }
+  try {
+    let current = root;
+    for (const part of parts) {
+      current = await current.getDirectoryHandle(part);
+    }
+    await current.getDirectoryHandle(leaf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Recursively copy a directory tree (FS Access has no rename/move, and a
  * rename must not drop children — previous versions deleted them).
  */

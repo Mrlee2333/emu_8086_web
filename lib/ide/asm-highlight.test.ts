@@ -40,6 +40,16 @@ describe("tokenizeAsmLine", () => {
     assert.ok(hex.some((t) => t.kind === "number" && t.value === "0x1A"));
   });
 
+  it("highlights BCD adjust mnemonics", () => {
+    for (const op of ["aaa", "aas", "daa", "das", "aam", "aad"]) {
+      const tokens = tokenizeAsmLine(op);
+      assert.ok(
+        tokens.some((t) => t.kind === "mnemonic" && t.value === op),
+        op,
+      );
+    }
+  });
+
   it("treats segment overrides as register + punct, not labels", () => {
     const tokens = tokenizeAsmLine("mov ax, es:[bx]");
     const reg = tokens.find((t) => t.value === "es");

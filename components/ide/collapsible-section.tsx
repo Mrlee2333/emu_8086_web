@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   IconChevronDownSm,
   IconChevronRight,
@@ -30,6 +30,9 @@ export function CollapsibleSection({
   // Start from defaultOpen so server HTML matches first client paint;
   // the stored value loads in an effect (no hydration mismatch).
   const [open, setOpen] = useState(defaultOpen);
+  // Set once the stored value has been attempted — the save effect must
+  // not persist the default over it on mount (effect order).
+  const loadedRef = useRef(false);
 
   useEffect(() => {
     if (!storageKey) return;
@@ -41,11 +44,12 @@ export function CollapsibleSection({
       } catch {
         /* best-effort */
       }
+      loadedRef.current = true;
     });
   }, [storageKey]);
 
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey || !loadedRef.current) return;
     try {
       localStorage.setItem(`emu8086web:panel:${storageKey}`, open ? "1" : "0");
     } catch {

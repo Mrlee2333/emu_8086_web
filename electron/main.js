@@ -502,6 +502,11 @@ function registerFolderIpc() {
   ipcMain.handle("emu8086web:delete-folder-entry", async (_e, rel) => {
     if (!hasNoDotSegments(rel)) throw new Error("Invalid path");
     const abs = await resolveInside(rel);
+    const st = await fs.lstat(abs);
+    // Directories stay deletable; files must be mutable source files.
+    if (!st.isDirectory() && !isSourceFileRel(rel)) {
+      throw new Error("Only .asm/.txt/.inc files");
+    }
     await fs.rm(abs, { recursive: true, force: true });
   });
 }

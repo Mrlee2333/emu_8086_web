@@ -55,6 +55,7 @@ import {
   pickWebFolder,
   readWebFile,
   supportsFolderPicker,
+  webEntryExists,
   writeWebFile,
   type WebDirHandle,
 } from "@/lib/ide/fs-access";
@@ -695,6 +696,10 @@ export function IdeWorkspace() {
         if (backend === "electron") {
           await window.electronAPI?.renameFolderEntry?.(relPath, base);
         } else if (backend === "web" && webDirRef.current) {
+          // Never merge into / overwrite an existing name.
+          if (await webEntryExists(webDirRef.current, base)) {
+            throw new Error("Already exists");
+          }
           // Web rename = recursive copy + delete (FS Access has no rename).
           const target = findNode({
             root: folderRoot ?? createExplorerRoot(),

@@ -33,6 +33,7 @@ All notable changes to emu8086web are documented in this file.
 - Toolbar stays on one line on small screens (icon-only buttons in a scroll strip); tree-row icon buttons show side-positioned tooltips that can't clip
 - Hardened folder IPC: main-process root trust, dotfile/extension policy on mutations, symlink refusal, strict type checks, no-overwrite create/rename
 - Fixed web folder rename dropping children, sample wipes, stale saves, blank editor past 5000 lines, ALU flag tables (incl. BCD), tokenizer `0x`/segment cases
+- Closed residual gaps: delete limited to source files (dirs still deletable), no-merge web renames, persisted panel prefs, BCD highlighting, symlink/refusal guards
 
 ## [1.3.2] — 2026-09-23
 

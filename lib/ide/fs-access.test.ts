@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   copyWebTree,
+  webEntryExists,
   type WebDirHandle,
   type WebEntryHandle,
   type WebFileHandle,
@@ -132,6 +133,18 @@ describe("copyWebTree", () => {
       (parentHandle as unknown as MockDirApi).dirs.has("nested"),
       false,
     );
+  });
+
+  it("detects existing files and folders for rename guards", async () => {
+    const root = createMockDir();
+    const src = (await root.getDirectoryHandle("src", {
+      create: true,
+    })) as unknown as MockDirApi;
+    src.files.set("a.asm", new TextEncoder().encode("a"));
+    assert.equal(await webEntryExists(asDir(root), "src/a.asm"), true);
+    assert.equal(await webEntryExists(asDir(root), "src"), true);
+    assert.equal(await webEntryExists(asDir(root), "missing.asm"), false);
+    assert.equal(await webEntryExists(asDir(root), "src/nope"), false);
   });
 
   it("copies files at the top level", async () => {
