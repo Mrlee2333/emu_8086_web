@@ -339,31 +339,40 @@ export type TreeEntry = {
   isDirectory: boolean;
 };
 
-/** Build a tree from flat posix relPaths (empty folders stay folders). */
+/**
+ * Build a tree from flat posix relPaths (empty folders stay folders).
+ * Disk listings are untrusted input: one bad segment (over-long name,
+ * unsanitizable) skips that entry instead of aborting the whole tree.
+ * Strict validation stays on user-entered names (dialogs).
+ */
 export function buildTreeFromPaths(paths: (string | TreeEntry)[]): ExplorerRoot {
   const root = createExplorerRoot();
   let result = root;
   for (const entry of paths) {
-    const raw = typeof entry === "string" ? entry : entry.relPath;
-    const forcedDir = typeof entry !== "string" && entry.isDirectory;
-    const parts = raw.split("/").filter(Boolean);
-    if (parts.length === 0) continue;
-    let parentPath = "";
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-      // Explicit directory flags win; otherwise the last segment with a
-      // dot/extension is a file and everything else is a folder.
-      const isFolder =
-        !isLast || forcedDir || !/\.[a-z0-9]{1,5}$/i.test(part);
-      const existing = findNode({ root: result, relPath: joinRelPath(parentPath, part) });
-      if (!existing) {
-        const toAdd = isFolder
-          ? createFolderNode({ name: part, parentPath })
-          : createFileNode({ name: part, parentPath });
-        result = addNode({ root: result, parentPath, node: toAdd });
+    try {
+      const raw = typeof entry === "string" ? entry : entry.relPath;
+      const forcedDir = typeof entry !== "string" && entry.isDirectory;
+      const parts = raw.split("/").filter(Boolean);
+      if (parts.length === 0) continue;
+      let parentPath = "";
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const isLast = i === parts.length - 1;
+        // Explicit directory flags win; otherwise the last segment with a
+        // dot/extension is a file and everything else is a folder.
+        const isFolder =
+          !isLast || forcedDir || !/\.[a-z0-9]{1,5}$/i.test(part);
+        const existing = findNode({ root: result, relPath: joinRelPath(parentPath, part) });
+        if (!existing) {
+          const toAdd = isFolder
+            ? createFolderNode({ name: part, parentPath })
+            : createFileNode({ name: part, parentPath });
+          result = addNode({ root: result, parentPath, node: toAdd });
+        }
+        parentPath = joinRelPath(parentPath, part);
       }
-      parentPath = joinRelPath(parentPath, part);
+    } catch {
+      continue;
     }
     if (countNodes({ root: result }) > MAX_TREE_NODES) break;
   }

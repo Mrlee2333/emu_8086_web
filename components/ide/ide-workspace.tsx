@@ -784,8 +784,24 @@ export function IdeWorkspace() {
           setOpenIds(remaining);
           setFiles((prev) => prev.filter((f) => !doomed.includes(f.id)));
           if (activeId && doomed.includes(activeId)) {
-            const fallback =
-              remaining[Math.max(0, openIds.indexOf(activeId) - 1)] ?? "";
+            // Neighbor fallback in original tab order: nearest surviving
+            // tab to the left, else the nearest to the right.
+            const at = openIds.indexOf(activeId);
+            let fallback = "";
+            for (let i = at - 1; i >= 0; i--) {
+              if (!doomed.includes(openIds[i])) {
+                fallback = openIds[i];
+                break;
+              }
+            }
+            if (!fallback) {
+              for (let i = at + 1; i < openIds.length; i++) {
+                if (!doomed.includes(openIds[i])) {
+                  fallback = openIds[i];
+                  break;
+                }
+              }
+            }
             setActiveId(fallback);
             lastSynced.current = null;
             // emu.source for the fallback syncs via the active-id effect.

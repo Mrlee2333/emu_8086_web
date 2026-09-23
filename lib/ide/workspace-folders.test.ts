@@ -100,6 +100,13 @@ describe("workspace-folders tree", () => {
     assert.equal(listFiles({ root }).length, 3);
   });
 
+  it("skips over-long segments instead of aborting the tree", () => {
+    const long = `${"a".repeat(80)}.asm`;
+    const root = buildTreeFromPaths(["main.asm", `examples/${long}`]);
+    assert.equal(findNode({ root, relPath: "main.asm" })?.kind, "file");
+    assert.ok(listFiles({ root }).length >= 1);
+  });
+
   it("keeps empty folders as folders (not files)", () => {
     const root = buildTreeFromPaths([
       { relPath: "examples", isDirectory: true },
