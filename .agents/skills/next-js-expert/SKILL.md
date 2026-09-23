@@ -1,11 +1,13 @@
 ---
 name: next-js-expert
-description: Build and maintain production full-stack applications with Next.js App Router, React, TypeScript, Tailwind CSS, Route Handlers, Server Actions, authentication, databases, caching, and deployment-safe configuration. Use when changing routes, UI, server-side data access, APIs, mutations, middleware, environment variables, or project architecture.
+description: Build and maintain production full-stack applications with Next.js App Router, React, Tailwind CSS, Route Handlers, Server Actions, authentication, databases, caching, and deployment-safe configuration. Use when changing routes, UI, server-side data access, APIs, mutations, middleware, environment variables, or project architecture.
 ---
 
 # Next.js Expert
 
 Build on the repository's installed Next.js version and existing conventions. Inspect the current structure, dependencies, and configuration before choosing an implementation. Reuse existing patterns before adding libraries or abstractions.
+
+For TypeScript style, types, and modeling rules, apply `typescript-best-practices`. Do not restate those rules here. For upgrading TypeScript major versions, use `typescript-migration`.
 
 ## Architecture
 
@@ -45,9 +47,6 @@ Build on the repository's installed Next.js version and existing conventions. In
 
 - Use named exports by default.
 - Use kebab-case folders.
-- Avoid `any`; use explicit domain types and narrow `unknown` at boundaries.
-- Avoid TypeScript enums; use `as const` objects or literal unions.
-- Derive types from schemas, ORM models, and functions where practical instead of duplicating shapes.
 - Keep files focused and split unrelated responsibilities. Prefer existing components, utilities, hooks, and server modules.
 - Do not create pass-through abstractions that have only one caller and no policy, transformation, or test seam.
 
