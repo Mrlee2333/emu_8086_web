@@ -26,7 +26,7 @@ export type WebEntryHandle = {
 export type WebFileHandle = WebEntryHandle & {
   getFile: () => Promise<File>;
   createWritable: () => Promise<{
-    write: (content: string) => Promise<void>;
+    write: (content: string | Blob | File) => Promise<void>;
     close: () => Promise<void>;
   }>;
 };
@@ -136,5 +136,29 @@ export async function createWebEntry(
     await current.getDirectoryHandle(name, { create: true });
   } else {
     await current.getFileHandle(name, { create: true });
+  }
+}
+
+/**
+ * Recursively copy a directory tree (FS Access has no rename/move, and a
+ * rename must not drop children — previous versions deleted them).
+ */
+export async function copyWebTree(
+  src: WebDirHandle,
+  destParent: WebDirHandle,
+  newName: string,
+): Promise<void> {
+  const dest = await destParent.getDirectoryHandle(newName, { create: true });
+  for await (const entry of src.values()) {
+    if (entry.kind === "file") {
+      const srcFile = await (await src.getFileHandle(entry.name)).getFile();
+      const destFile = await dest.getFileHandle(entry.name, { create: true });
+      const writable = await destFile.createWritable();
+      await writable.write(srcFile);
+      await writable.close();
+    } else {
+      const sub = await src.getDirectoryHandle(entry.name);
+      await copyWebTree(sub, dest, entry.name);
+    }
   }
 }

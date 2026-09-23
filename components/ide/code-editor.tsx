@@ -528,7 +528,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                     </span>
                   ))
                 )}
-                {i < highlightRows.length - 1 ? null : null}
               </div>
             ))}
           </pre>
@@ -542,9 +541,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           onScroll={syncScroll}
           spellCheck={false}
           wrap={wordWrap ? "soft" : "off"}
-          className={`relative z-[3] h-full min-h-0 w-full resize-none border-none bg-transparent px-3.5 py-3 font-mono text-[13px] leading-5 text-transparent caret-amber outline-none selection:bg-[var(--highlight-border)] ${
-            wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
-          }`}
+          className={`relative z-[3] h-full min-h-0 w-full resize-none border-none bg-transparent px-3.5 py-3 font-mono text-[13px] leading-5 caret-amber outline-none selection:bg-amber selection:text-[var(--amber-fg)] ${
+            // The overlay renders the visible text: keep the textarea
+            // transparent only while it paints underneath (>5000 lines
+            // falls back to plain visible text).
+            highlightRows ? "text-transparent" : "text-ink"
+          } ${wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
           style={{ tabSize }}
           aria-label="Assembly source code"
         />

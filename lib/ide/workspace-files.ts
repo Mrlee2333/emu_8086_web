@@ -11,8 +11,11 @@ export const FILES_STORAGE_KEY = "emu8086web:files:v1";
 export const ACTIVE_FILE_KEY = "emu8086web:activeFile";
 /** Open editor tabs (VS Code semantics: closing a tab keeps the project file). */
 export const OPEN_TABS_KEY = "emu8086web:openTabs";
-/** Last disk folder opened in the Electron shell (restored on launch). */
-export const ELECTRON_ROOT_KEY = "emu8086web:electronRoot";
+/**
+ * Tab id → folder relPath for folder-backed tabs (rehydrated when the
+ * Electron folder is restored; confinement still enforced main-side).
+ */
+export const FOLDER_MAP_KEY = "emu8086web:folderMap";
 
 /** Largest single file accepted via Open (256 KiB — classroom .asm is ~KBs). */
 export const MAX_OPEN_FILE_BYTES = 256 * 1024;

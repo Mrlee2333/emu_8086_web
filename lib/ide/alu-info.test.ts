@@ -39,6 +39,28 @@ describe("describeAlu", () => {
     assert.equal(out?.isAluOp, false);
   });
 
+  it("lists CF/OF for mul and undefined flags for div/not", () => {
+    const mul = describeAlu({
+      instrs: [{ op: "mul", args: ["bl"], ln: 1 }],
+      ip: 0,
+      reg,
+      flags,
+    });
+    assert.ok(mul?.isAluOp);
+    assert.deepEqual(mul?.affectedFlags, ["CF", "OF"]);
+    for (const op of ["div", "not"]) {
+      const out = describeAlu({
+        instrs: [{ op, args: ["bl"], ln: 1 }],
+        ip: 0,
+        reg,
+        flags,
+      });
+      assert.ok(out?.isAluOp);
+      assert.deepEqual(out?.affectedFlags, []);
+      assert.ok(out?.summary.includes("undefined"));
+    }
+  });
+
   it("returns null past the last instruction", () => {
     assert.equal(describeAlu({ instrs: [], ip: 0, reg, flags }), null);
   });

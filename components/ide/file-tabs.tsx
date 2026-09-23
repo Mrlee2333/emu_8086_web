@@ -47,7 +47,6 @@ export function FileTabs({
               className="rounded px-1 text-ink-dim opacity-60 hover:bg-line hover:text-red hover:opacity-100"
               title="Close tab (keeps the project file)"
               aria-label={`Close ${f.name}`}
-              data-tip="Close tab (keeps the project file)"
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(f.id);
@@ -63,7 +62,6 @@ export function FileTabs({
         className="flex shrink-0 items-center px-3 text-ink-dim hover:text-amber"
         title="New file"
         aria-label="New file"
-        data-tip="New file"
         onClick={onNew}
       >
         <IconFilePlus />

@@ -9,6 +9,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 const MENU_CHANNEL = "emu8086web:menu";
 const FOLDER_CHANNELS = {
   openFolder: "emu8086web:open-folder",
+  getFolder: "emu8086web:get-folder",
+  closeFolder: "emu8086web:close-folder",
   listFolder: "emu8086web:list-folder",
   readFile: "emu8086web:read-folder-file",
   writeFile: "emu8086web:write-folder-file",
@@ -25,16 +27,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(MENU_CHANNEL, handler);
     return () => ipcRenderer.removeListener(MENU_CHANNEL, handler);
   },
+  // Note: the allowed root lives in the main process (userData-persisted).
+  // The renderer only sends paths relative to it — never absolute roots.
   openFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.openFolder),
-  listFolder: (root) => ipcRenderer.invoke(FOLDER_CHANNELS.listFolder, root),
-  readFolderFile: (root, relPath) =>
-    ipcRenderer.invoke(FOLDER_CHANNELS.readFile, root, relPath),
-  writeFolderFile: (root, relPath, content) =>
-    ipcRenderer.invoke(FOLDER_CHANNELS.writeFile, root, relPath, content),
-  createFolderEntry: (root, relPath, isDirectory) =>
-    ipcRenderer.invoke(FOLDER_CHANNELS.createEntry, root, relPath, isDirectory),
-  renameFolderEntry: (root, oldRel, newRel) =>
-    ipcRenderer.invoke(FOLDER_CHANNELS.renameEntry, root, oldRel, newRel),
-  deleteFolderEntry: (root, relPath) =>
-    ipcRenderer.invoke(FOLDER_CHANNELS.deleteEntry, root, relPath),
+  getFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.getFolder),
+  closeFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.closeFolder),
+  listFolder: () => ipcRenderer.invoke(FOLDER_CHANNELS.listFolder),
+  readFolderFile: (relPath) =>
+    ipcRenderer.invoke(FOLDER_CHANNELS.readFile, relPath),
+  writeFolderFile: (relPath, content) =>
+    ipcRenderer.invoke(FOLDER_CHANNELS.writeFile, relPath, content),
+  createFolderEntry: (relPath, isDirectory) =>
+    ipcRenderer.invoke(FOLDER_CHANNELS.createEntry, relPath, isDirectory),
+  renameFolderEntry: (oldRel, newRel) =>
+    ipcRenderer.invoke(FOLDER_CHANNELS.renameEntry, oldRel, newRel),
+  deleteFolderEntry: (relPath) =>
+    ipcRenderer.invoke(FOLDER_CHANNELS.deleteEntry, relPath),
 });

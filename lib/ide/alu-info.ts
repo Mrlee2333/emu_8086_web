@@ -8,8 +8,16 @@ const ALU_OPS = new Set([
   "shl", "sal", "shr", "sar", "rol", "ror", "rcl", "rcr",
 ]);
 
+/**
+ * Ops whose flags are undefined/untouched on real 8086 hardware
+ * (DIV/IDIV leave flags alone; NOT touches nothing).
+ */
+const FLAGS_UNDEFINED = new Set(["div", "idiv", "not"]);
+
 const FLAG_AFFECTED: Record<string, string[]> = {
   add: ["CF", "PF", "AF", "ZF", "SF", "OF"],
+  mul: ["CF", "OF"],
+  imul: ["CF", "OF"],
   adc: ["CF", "PF", "AF", "ZF", "SF", "OF"],
   sub: ["CF", "PF", "AF", "ZF", "SF", "OF"],
   sbb: ["CF", "PF", "AF", "ZF", "SF", "OF"],
@@ -75,6 +83,14 @@ export function describeAlu({
       op,
       isAluOp: false,
       summary: `${head} — no flags changed`,
+      affectedFlags: [],
+    };
+  }
+  if (FLAGS_UNDEFINED.has(op)) {
+    return {
+      op,
+      isAluOp: true,
+      summary: `${head} — flags undefined on 8086`,
       affectedFlags: [],
     };
   }

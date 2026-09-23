@@ -49,6 +49,7 @@ import {
   WORD_WRAP_KEY,
 } from "@/lib/ide/editor-prefs";
 import {
+  copyWebTree,
   createWebEntry,
   listWebFolder,
   pickWebFolder,
@@ -73,8 +74,8 @@ import {
 import {
   createDefaultFile,
   createFileId,
-  ELECTRON_ROOT_KEY,
   ensureAsmExtension,
+  FOLDER_MAP_KEY,
   isOpenableSize,
   loadFilesFromStorage,
   MAX_OPEN_FILE_BYTES,
@@ -118,7 +119,6 @@ export function IdeWorkspace() {
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(
     null,
   );
-  const electronRootRef = useRef<string | null>(null);
   const webDirRef = useRef<WebDirHandle | null>(null);
   const folderBackendRef = useRef<"electron" | "web" | null>(null);
   const folderPathByFileIdRef = useRef<Map<string, string>>(new Map());
@@ -141,6 +141,8 @@ export function IdeWorkspace() {
   const askInput = useCallback(
     (req: Extract<DialogRequest, { kind: "input" }>) =>
       new Promise<string | null>((resolve) => {
+        // A second request cancels the first so no promise hangs forever.
+        dialogResolveRef.current?.(null);
         dialogResolveRef.current = (v) =>
           resolve(typeof v === "string" ? v : null);
         dialogSeqRef.current += 1;
@@ -152,12 +154,50 @@ export function IdeWorkspace() {
   const askConfirm = useCallback(
     (req: Extract<DialogRequest, { kind: "confirm" }>) =>
       new Promise<boolean>((resolve) => {
+        // A second request cancels the first so no promise hangs forever.
+        dialogResolveRef.current?.(null);
         dialogResolveRef.current = (v) => resolve(v === true);
         dialogSeqRef.current += 1;
         setDialog({ req, id: dialogSeqRef.current });
       }),
     [],
   );
+
+  /** Persist tab id → folder relPath (rehydrated on Electron restore). */
+  const persistFolderMap = () => {
+    try {
+      const obj: Record<string, string> = {};
+      for (const [id, rel] of folderPathByFileIdRef.current) obj[id] = rel;
+      localStorage.setItem(FOLDER_MAP_KEY, JSON.stringify(obj));
+    } catch {
+      /* best-effort */
+    }
+  };
+  const folderMapAppliedRef = useRef(false);
+
+  // Rehydrate folder mappings once the Electron folder tree is back.
+  useEffect(() => {
+    if (folderBackendRef.current !== "electron" || !folderRoot) return;
+    if (folderMapAppliedRef.current) return;
+    folderMapAppliedRef.current = true;
+    try {
+      const raw = localStorage.getItem(FOLDER_MAP_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      for (const [id, rel] of Object.entries(parsed)) {
+        if (
+          typeof rel === "string" &&
+          openIds.includes(id) &&
+          files.some((f) => f.id === id)
+        ) {
+          folderPathByFileIdRef.current.set(id, rel);
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot rehydrate
+  }, [folderRoot]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorWrapRef = useRef<HTMLDivElement>(null);
@@ -287,31 +327,25 @@ export function IdeWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefs once on mount
   }, []);
 
-  // Restore the last Electron folder on launch (real FS outlives reloads).
+  // Restore the last Electron folder on launch. The allowed root is
+  // main-process state (userData); the renderer only asks what it is.
   useEffect(() => {
     if (!isElectronRenderer()) return;
     let cancelled = false;
     void (async () => {
       try {
-        const raw = localStorage.getItem(ELECTRON_ROOT_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as { root?: string; name?: string };
-        if (!parsed.root || !window.electronAPI?.listFolder) return;
-        const entries = await window.electronAPI.listFolder(parsed.root);
+        const current = await window.electronAPI?.getFolder?.();
+        if (!current || cancelled) return;
+        if (!window.electronAPI?.listFolder) return;
+        const entries = await window.electronAPI.listFolder();
         if (cancelled) return;
-        electronRootRef.current = parsed.root;
         folderBackendRef.current = "electron";
-        const name = parsed.name || parsed.root.split("/").pop() || parsed.root;
-        setFolderName(name);
+        setFolderName(current.name);
         const tree = buildTreeFromPaths(entries ?? []);
-        tree.name = name;
+        tree.name = current.name;
         setFolderRoot(tree);
       } catch {
-        try {
-          localStorage.removeItem(ELECTRON_ROOT_KEY);
-        } catch {
-          /* ignore */
-        }
+        /* no folder stored */
       }
     })();
     return () => {
@@ -381,10 +415,8 @@ export function IdeWorkspace() {
   const refreshFolder = useCallback(async () => {
     const backend = folderBackendRef.current;
     try {
-      if (backend === "electron" && electronRootRef.current) {
-        const entries = await window.electronAPI?.listFolder?.(
-          electronRootRef.current,
-        );
+      if (backend === "electron") {
+        const entries = await window.electronAPI?.listFolder?.();
         const root = buildTreeFromPaths(entries ?? []);
         root.name = folderName;
         setFolderRoot(root);
@@ -403,32 +435,28 @@ export function IdeWorkspace() {
 
   const openFolder = useCallback(async () => {
     // Electron desktop first (real filesystem via preload bridge).
-    try {
-      const picked = await window.electronAPI?.openFolder?.();
-      if (picked) {
-        electronRootRef.current = picked.root;
+    // A missing bridge means "not Electron" — only then try the web picker.
+    // An explicit null means the user cancelled: stop, don't open a 2nd picker.
+    if (window.electronAPI?.openFolder) {
+      try {
+        const picked = await window.electronAPI.openFolder();
+        if (!picked) return;
         webDirRef.current = null;
         folderBackendRef.current = "electron";
+        folderMapAppliedRef.current = true;
+        folderPathByFileIdRef.current.clear();
+        persistFolderMap();
         setFolderName(picked.name);
-        const entries = await window.electronAPI?.listFolder?.(picked.root);
+        const entries = await window.electronAPI?.listFolder?.();
         const root = buildTreeFromPaths(entries ?? []);
         root.name = picked.name;
         setFolderRoot(root);
         setSelectedFolderPath(null);
         setSidebarCollapsed(false);
-        try {
-          localStorage.setItem(
-            ELECTRON_ROOT_KEY,
-            JSON.stringify({ root: picked.root, name: picked.name }),
-          );
-        } catch {
-          /* best-effort */
-        }
         showToast(`Opened folder ${picked.name}`);
-        return;
+      } catch {
+        showToast("Open folder failed");
       }
-    } catch {
-      showToast("Open folder failed");
       return;
     }
     // Web fallback: File System Access API (Chromium).
@@ -439,7 +467,6 @@ export function IdeWorkspace() {
     const dir = await pickWebFolder();
     if (!dir) return;
     webDirRef.current = dir;
-    electronRootRef.current = null;
     folderBackendRef.current = "web";
     setFolderName(dir.name);
     const entries = await listWebFolder(dir);
@@ -455,15 +482,16 @@ export function IdeWorkspace() {
     setFolderRoot(null);
     setFolderName("");
     setSelectedFolderPath(null);
-    electronRootRef.current = null;
     webDirRef.current = null;
     folderBackendRef.current = null;
     folderPathByFileIdRef.current.clear();
+    folderMapAppliedRef.current = false;
     try {
-      localStorage.removeItem(ELECTRON_ROOT_KEY);
+      localStorage.removeItem(FOLDER_MAP_KEY);
     } catch {
       /* best-effort */
     }
+    void window.electronAPI?.closeFolder?.().catch(() => {});
   }, []);
 
   const toggleFolder = useCallback((relPath: string) => {
@@ -500,12 +528,8 @@ export function IdeWorkspace() {
       }
       try {
         let content = "";
-        if (backend === "electron" && electronRootRef.current) {
-          content =
-            (await window.electronAPI?.readFolderFile?.(
-              electronRootRef.current,
-              relPath,
-            )) ?? "";
+        if (backend === "electron") {
+          content = (await window.electronAPI?.readFolderFile?.(relPath)) ?? "";
         } else if (backend === "web" && webDirRef.current) {
           content = await readWebFile(webDirRef.current, relPath);
         }
@@ -523,6 +547,7 @@ export function IdeWorkspace() {
           return [...flushed, file];
         });
         folderPathByFileIdRef.current.set(file.id, relPath);
+        persistFolderMap();
         setOpenIds((prev) => [...prev, file.id]);
         setActiveId(file.id);
         setSelectedFolderPath(relPath);
@@ -568,15 +593,10 @@ export function IdeWorkspace() {
           });
           rel = node.relPath;
         }
-        if (backend === "electron" && electronRootRef.current) {
-          await window.electronAPI?.createFolderEntry?.(
-            electronRootRef.current,
-            rel,
-            isDirectory,
-          );
+        if (backend === "electron") {
+          await window.electronAPI?.createFolderEntry?.(rel, isDirectory);
           if (!isDirectory) {
             await window.electronAPI?.writeFolderFile?.(
-              electronRootRef.current,
               rel,
               `; ${rel}\n.model small\n.stack 100h\n.data\n.code\nmain proc\n    mov ah, 4ch\n    int 21h\nmain endp\nend main\n`,
             );
@@ -640,29 +660,33 @@ export function IdeWorkspace() {
             ? ensureAsmExtension(newName)
             : sanitizeFileName(newName);
         const base = parent ? `${parent}/${clean}` : clean;
-        if (backend === "electron" && electronRootRef.current) {
-          await window.electronAPI?.renameFolderEntry?.(
-            electronRootRef.current,
-            relPath,
-            base,
-          );
+        if (backend === "electron") {
+          await window.electronAPI?.renameFolderEntry?.(relPath, base);
         } else if (backend === "web" && webDirRef.current) {
-          // Web rename = create + delete (FS Access has no rename).
-          const node = findNode({
+          // Web rename = recursive copy + delete (FS Access has no rename).
+          const target = findNode({
             root: folderRoot ?? createExplorerRoot(),
             relPath,
           });
-          if (!node) throw new Error("Path not found");
-          if (node.kind === "file") {
-            const content = await readWebFile(webDirRef.current, relPath);
-            await createWebEntry(webDirRef.current, base, false);
-            await writeWebFile(webDirRef.current, base, content);
+          if (!target) throw new Error("Path not found");
+          const dir = webDirRef.current;
+          if (target.kind === "file") {
+            const content = await readWebFile(dir, relPath);
+            await createWebEntry(dir, base, false);
+            await writeWebFile(dir, base, content);
           } else {
-            await createWebEntry(webDirRef.current, base, true);
+            const parts = relPath.split("/").filter(Boolean);
+            const leaf = parts.pop() ?? "";
+            let parentHandle = dir;
+            for (const part of parts) {
+              parentHandle = await parentHandle.getDirectoryHandle(part);
+            }
+            const srcHandle = await parentHandle.getDirectoryHandle(leaf);
+            await copyWebTree(srcHandle, dir, base);
           }
           const parts = relPath.split("/").filter(Boolean);
           const leaf = parts.pop() ?? "";
-          let parentHandle = webDirRef.current;
+          let parentHandle = dir;
           for (const part of parts) {
             parentHandle = await parentHandle.getDirectoryHandle(part);
           }
@@ -677,6 +701,7 @@ export function IdeWorkspace() {
             );
           }
         }
+        persistFolderMap();
         await refreshFolder();
         showToast(`Renamed to ${clean}`);
       } catch (e) {
@@ -699,11 +724,8 @@ export function IdeWorkspace() {
       });
       if (!ok) return;
       try {
-        if (backend === "electron" && electronRootRef.current) {
-          await window.electronAPI?.deleteFolderEntry?.(
-            electronRootRef.current,
-            relPath,
-          );
+        if (backend === "electron") {
+          await window.electronAPI?.deleteFolderEntry?.(relPath);
         } else if (backend === "web" && webDirRef.current) {
           const parts = relPath.split("/").filter(Boolean);
           const leaf = parts.pop() ?? "";
@@ -713,18 +735,32 @@ export function IdeWorkspace() {
           }
           await current.removeEntry(leaf, { recursive: true });
         }
+        // Close mapped tabs and drop their buffers (no ghost files).
+        const doomed: string[] = [];
         for (const [id, p] of [...folderPathByFileIdRef.current]) {
           if (p === relPath || p.startsWith(`${relPath}/`)) {
             folderPathByFileIdRef.current.delete(id);
+            doomed.push(id);
           }
         }
+        if (doomed.length > 0) {
+          setOpenIds((prev) => prev.filter((id) => !doomed.includes(id)));
+          setFiles((prev) => prev.filter((f) => !doomed.includes(f.id)));
+          if (activeId && doomed.includes(activeId)) {
+            setActiveId("");
+            lastSynced.current = null;
+            emu.setSource("");
+          }
+        }
+        persistFolderMap();
         await refreshFolder();
         showToast(`Deleted ${relPath}`);
       } catch {
         showToast("Delete failed");
       }
     },
-    [refreshFolder, showToast, askConfirm],
+    // emu identity changes every render; depending on it keeps this fresh.
+    [refreshFolder, showToast, askConfirm, activeId, emu],
   );
 
   const updateActiveContent = (content: string) => {
@@ -785,6 +821,7 @@ export function IdeWorkspace() {
    */
   const closeTab = (id: string) => {
     folderPathByFileIdRef.current.delete(id);
+    persistFolderMap();
     const tabs = openIds.includes(id)
       ? openIds.filter((t) => t !== id)
       : openIds;
@@ -937,10 +974,9 @@ export function IdeWorkspace() {
     // Folder-backed files save straight back to disk (Electron / FS Access).
     const folderRel = folderPathByFileIdRef.current.get(activeId);
     const backend = folderBackendRef.current;
-    if (folderRel && backend === "electron" && electronRootRef.current) {
-      const root = electronRootRef.current;
+    if (folderRel && backend === "electron") {
       void window.electronAPI
-        ?.writeFolderFile?.(root, folderRel, emu.source)
+        ?.writeFolderFile?.(folderRel, emu.source)
         .then(
           () => {
             setFiles((prev) =>
@@ -1040,12 +1076,16 @@ export function IdeWorkspace() {
 
   const loadSample = (key: SampleKey) => {
     if (!active) {
-      const file = createDefaultFile("main.asm");
+      // Never replace the project: samples always open as a new tab.
+      const file = createDefaultFile(
+        `sample-${key}.asm`.replace(/[^a-z0-9_.-]/gi, "_"),
+      );
       file.content = SAMPLES[key];
-      setFiles([file]);
+      setFiles((prev) => [...prev, file]);
+      setOpenIds((prev) => [...prev, file.id]);
       setActiveId(file.id);
-      setOpenIds([file.id]);
       lastSynced.current = null;
+      queueMicrotask(() => emu.setSource(file.content));
     } else {
       updateActiveContent(SAMPLES[key]);
     }

@@ -1,29 +1,24 @@
 /**
- * Electron folder security tests (v1.4.0).
- * Run: bun test lib
+ * Folder-guard tests (v1.4.0) — these run against the SAME module
+ * `electron/main.js` requires for IPC enforcement (single source).
+ * Run: bun test lib electron
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  isListableFile,
-  isReadableSize,
-  isSafeRelPath,
-  normalizeRelPath,
-} from "./folder-security";
+import * as guards from "./folder-guards.js";
 
-describe("folder-security", () => {
-  it("normalizes separators and dot segments", () => {
-    assert.equal(normalizeRelPath("a\\b\\c.asm"), "a/b/c.asm");
-    assert.equal(normalizeRelPath("a/./b.asm"), "a/b.asm");
-    assert.equal(normalizeRelPath("C:\\proj\\main.asm"), "proj/main.asm");
-  });
+const { isSafeRelPath, isListableFile, MAX_FOLDER_FILE_BYTES } = guards;
 
-  it("rejects traversal and absolute paths", () => {
+describe("folder-guards (shipped IPC rules)", () => {
+  it("rejects traversal, absolute, drive, and control-char paths", () => {
     assert.equal(isSafeRelPath("main.asm"), true);
     assert.equal(isSafeRelPath("examples/sort.asm"), true);
     assert.equal(isSafeRelPath("../../etc/passwd"), false);
+    assert.equal(isSafeRelPath("a/../../b"), false);
     assert.equal(isSafeRelPath("/abs/main.asm"), false);
     assert.equal(isSafeRelPath("C:\\win\\evil.asm"), false);
+    assert.equal(isSafeRelPath("a\0b.asm"), false);
+    assert.equal(isSafeRelPath("a\nb.asm"), false);
     assert.equal(isSafeRelPath(""), false);
   });
 
@@ -33,11 +28,10 @@ describe("folder-security", () => {
     assert.equal(isListableFile("lib.inc"), true);
     assert.equal(isListableFile("prog.exe"), false);
     assert.equal(isListableFile(".hidden.asm"), false);
+    assert.equal(isListableFile("noext"), false);
   });
 
-  it("enforces the open size cap", () => {
-    assert.equal(isReadableSize(10), true);
-    assert.equal(isReadableSize(-1), false);
-    assert.equal(isReadableSize(10 * 1024 * 1024), false);
+  it("caps files at 256 KiB", () => {
+    assert.equal(MAX_FOLDER_FILE_BYTES, 256 * 1024);
   });
 });

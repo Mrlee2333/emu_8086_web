@@ -51,12 +51,17 @@ export function InputDialogHost({ request, onResolve }: InputDialogHostProps) {
       >
         <p className="text-sm text-ink">{request.message}</p>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn" onClick={() => close(null)}>
+          <button
+            type="button"
+            className="btn"
+            autoFocus={request.danger === true}
+            onClick={() => close(null)}
+          >
             Cancel
           </button>
           <button
             type="button"
-            autoFocus
+            autoFocus={request.danger !== true}
             className={`btn ${request.danger ? "btn-danger" : "btn-primary"}`}
             onClick={() => close(true)}
           >
