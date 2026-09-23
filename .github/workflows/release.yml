@@ -77,3 +77,9 @@ jobs:
           else
             gh release create "$TAG" --title "$TAG" --notes-file "${{ steps.notes.outputs.file }}"
           fi
+
+      # Tags pushed with GITHUB_TOKEN do not retrigger other workflows,
+      # so the desktop installer build needs an explicit dispatch.
+      - name: Dispatch desktop installer build
+        if: steps.check.outputs.exists == 'false'
+        run: gh workflow run release-desktop.yml --ref "v${{ steps.version.outputs.version }}"
