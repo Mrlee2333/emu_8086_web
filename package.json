@@ -35,7 +35,7 @@
     "verify": "bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.110.8",
+    "@supabase/supabase-js": "^2.117.0",
     "@vercel/analytics": "^2.0.1",
     "next": "16.2.10",
     "qrcode": "^1.5.4",
@@ -44,15 +44,15 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20.19.43",
     "@types/qrcode": "^1.5.6",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
     "eslint-config-next": "16.2.10",
     "husky": "^9.1.7",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-7": "npm:typescript@^7.0.2"
   },
