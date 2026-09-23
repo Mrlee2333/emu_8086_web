@@ -2,6 +2,39 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.4.0] — 2026-09-23
+
+### Added
+
+- Folder workspace (VS Code-like Explorer): open any folder and browse `.asm` / `.txt` / `.inc` in a tree; create, rename, and delete files + subfolders
+  - Electron desktop: scoped IPC (`open-folder`, `list`, `read`, `write`, `create`, `rename`, `delete`) confined to the picked root, 256 KiB file cap, 2000-entry list cap; native File → Open Folder… / Close Folder menu
+  - Web: File System Access picker (`showDirectoryPicker`) on Chromium with the same caps; graceful guidance elsewhere
+  - Collapsible left sidebar with Hide/Show Explorer toggle (persisted in localStorage, keyboard-accessible)
+  - Folder-backed tabs: opening a tree file creates a tab; Ctrl+S writes back to disk, other files keep the download flow
+  - Pure tree model (`lib/ide/workspace-folders.ts`) + path guards (`lib/electron/folder-security.ts`) with `node:test` suites
+- 8086 editor basics from the original Windows emu8086:
+  - Syntax highlighting overlay (registers, mnemonics, directives, labels, numbers, strings, `;` comments) in both themes; textarea stays the edit source
+  - ALU panel in the CPU column: describes the next instruction and its affected flags (e.g. `ADD AX, 1 — updates CF PF AF ZF SF OF`)
+
+### Security
+
+- Folder IPC validates every relPath (no traversal, absolute, drive-letter, or control-char paths) and resolves inside the opened root before any fs call
+
+### Fixed
+
+- Replaced `window.prompt()` / `window.confirm()` with in-app dialogs — `prompt()` throws in Electron, which crashed New file/folder, rename, delete, and Save-as flows
+- Browsers without a disk folder now get an Overleaf-like virtual project in the Explorer (create/rename/delete multiple files, export all) instead of an empty panel
+- Tabs behave like VS Code: closing a tab keeps the project file (open tabs persist across reloads); only the Explorer trash deletes from the project
+- Electron opens filesystem-first (Open-folder welcome state, last folder restored) instead of the virtual project
+- Explorer icon buttons show instant hover tooltips; Hide Explorer lives in the panel header with an icon-only rail to reopen
+- Empty folders stay folders (were misbuilt as files, blocking file creation inside); folder icons show open/closed state
+- CPU column panels (registers, flags, ALU, status, watch, data, memory, stacks) collapse via header chevrons
+- Project export is a single `emu8086-project.zip` (dependency-free writer) instead of per-file downloads
+- Toolbar stays on one line on small screens (icon-only buttons in a scroll strip); tree-row icon buttons show side-positioned tooltips that can't clip
+- Hardened folder IPC: main-process root trust, dotfile/extension policy on mutations, symlink refusal, strict type checks, no-overwrite create/rename
+- Fixed web folder rename dropping children, sample wipes, stale saves, blank editor past 5000 lines, ALU flag tables (incl. BCD), tokenizer `0x`/segment cases
+- Closed residual gaps: delete limited to source files (dirs still deletable), no-merge web renames, persisted panel prefs, BCD highlighting, symlink/refusal guards
+
 ## [1.3.2] — 2026-09-23
 
 ### Added

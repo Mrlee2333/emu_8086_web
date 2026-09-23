@@ -103,8 +103,8 @@ function ShareDialogBody({
       }
       onToast("Share link copied");
     } catch {
-      window.prompt("Copy this share link:", result.url);
-      onToast("Share link ready");
+      // The URL is already shown in a selectable field below.
+      onToast("Copy failed — select the link above");
     }
   };
 

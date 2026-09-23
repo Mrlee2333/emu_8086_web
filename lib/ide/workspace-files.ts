@@ -9,6 +9,13 @@ export interface WorkspaceFile {
 
 export const FILES_STORAGE_KEY = "emu8086web:files:v1";
 export const ACTIVE_FILE_KEY = "emu8086web:activeFile";
+/** Open editor tabs (VS Code semantics: closing a tab keeps the project file). */
+export const OPEN_TABS_KEY = "emu8086web:openTabs";
+/**
+ * Tab id → folder relPath for folder-backed tabs (rehydrated when the
+ * Electron folder is restored; confinement still enforced main-side).
+ */
+export const FOLDER_MAP_KEY = "emu8086web:folderMap";
 
 /** Largest single file accepted via Open (256 KiB — classroom .asm is ~KBs). */
 export const MAX_OPEN_FILE_BYTES = 256 * 1024;
@@ -73,14 +80,22 @@ export function isOpenableSize(size: number): boolean {
 export function saveFilesToStorage(
   files: WorkspaceFile[],
   activeId: string,
+  openIds?: string[],
 ): void {
-  localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
-  localStorage.setItem(ACTIVE_FILE_KEY, activeId || "");
+  // QuotaExceeded/SecurityError must never break the persist effect.
+  try {
+    localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
+    localStorage.setItem(ACTIVE_FILE_KEY, activeId || "");
+    if (openIds) localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openIds));
+  } catch {
+    /* storage unavailable or full — workspace stays in memory */
+  }
 }
 
 export function loadFilesFromStorage(): {
   files: WorkspaceFile[];
   activeId: string;
+  openIds: string[] | null;
 } | null {
   if (typeof window === "undefined") return null;
   try {
@@ -89,12 +104,24 @@ export function loadFilesFromStorage(): {
     if (raw === null) return null;
     const files = JSON.parse(raw) as WorkspaceFile[];
     if (!Array.isArray(files)) return null;
-    if (files.length === 0) return { files: [], activeId: "" };
+    let openIds: string[] | null = null;
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(OPEN_TABS_KEY) ?? "null",
+      ) as unknown;
+      if (Array.isArray(parsed)) {
+        const ids = parsed.filter((v): v is string => typeof v === "string");
+        openIds = ids.filter((id) => files.some((f) => f.id === id));
+      }
+    } catch {
+      openIds = null;
+    }
+    if (files.length === 0) return { files: [], activeId: "", openIds: [] };
     const id =
       activeId && files.some((f) => f.id === activeId)
         ? activeId
         : files[0].id;
-    return { files, activeId: id };
+    return { files, activeId: id, openIds };
   } catch {
     return null;
   }

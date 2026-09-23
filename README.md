@@ -2,7 +2,7 @@
 
 Browser-based 8086 assembler and step debugger. A modernization of classic emu8086 for every platform — write, assemble, and debug MASM-style assembly entirely in your browser.
 
-**Developed by [Nafis Islam Kabbo](https://nafiskabbo.vercel.app/)** · Version **1.3.0** · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
+**Developed by [Nafis Islam Kabbo](https://nafiskabbo.vercel.app/)** · Version **1.4.0** · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
 
 - Product: [https://emu-8086-web.vercel.app](https://emu-8086-web.vercel.app)
 - Portfolio: [https://nafiskabbo.vercel.app](https://nafiskabbo.vercel.app)
@@ -47,7 +47,7 @@ bun install
 bun run dist:mac
 ```
 
-Open the DMG under `dist/` (e.g. `dist/emu8086web-1.3.0-arm64.dmg`), drag the app to Applications, and launch it. On Apple silicon this builds `arm64`; on Intel Macs it builds `x64`.
+Open the DMG under `dist/` (e.g. `dist/emu8086web-1.4.0-arm64.dmg`), drag the app to Applications, and launch it. On Apple silicon this builds `arm64`; on Intel Macs it builds `x64`.
 
 ### Step by step (same thing, explicit)
 
@@ -68,8 +68,8 @@ bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 an
 
 ### Desktop menu, updates, and releases
 
-- The app menu carries File (New/Open/Save/Save As), Assemble (Compile/Run/Pause/Step/Reset), standard Edit roles, View zoom/reload, Window, and Help (shortcuts, ASCII codes, converter, issue tracker, GitHub) — all wired into the IDE.
-- Auto-update: the packaged app checks GitHub Releases after launch and offers a restart when a newer version is downloaded; “Check for Updates…” lives in the app menu. Publishing a release is one tag: `git tag v1.3.0 && git push origin v1.3.0` — the `release-desktop` workflow builds arm64 + x64 DMGs and attaches them to the release. Until Developer ID signing + notarization are configured, macOS installs the update from the downloaded DMG manually.
+- The app menu carries File (New/Open/Open Folder/Close Folder/Save/Save As), Assemble (Compile/Run/Pause/Single Step/Step Back/Reset), standard Edit roles, View zoom/reload, Window, and Help (shortcuts, ASCII codes, converter, issue tracker, GitHub) — all wired into the IDE.
+- Auto-update: the packaged app checks GitHub Releases after launch and offers a restart when a newer version is downloaded; “Check for Updates…” lives in the app menu. Publishing a release is one tag: `git tag v1.4.0 && git push origin v1.4.0` — the `release-desktop` workflow builds arm64 + x64 DMGs and attaches them to the release. Until Developer ID signing + notarization are configured, macOS installs the update from the downloaded DMG manually.
 
 ### Troubleshooting (desktop)
 
@@ -79,14 +79,15 @@ bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 an
 
 ## Features
 
-- Multi-file workspace (tabs, open multiple `.asm` files, named Save / Save as)
-- Compile, Run, Pause, Step, Reset with breakpoints
-- Registers, flags (with Details view), data segment, hex memory dump, stack & call stack
+- Folder workspace: open any directory on desktop (Electron) or Chromium, browse `.asm` / `.txt` / `.inc` in a VS Code-like Explorer (create/rename/delete), collapsible sidebar; plain browsers get an Overleaf-like on-device project with one-click `.zip` export
+- Multi-file tabs (closing a tab keeps the project file); folder-backed Save writes straight to disk, otherwise Save downloads
+- Compile, Run, Pause, Single Step, Step Back (time-travel), Reset with breakpoints
+- Registers, flags (with Details view), ALU operation view, watch expressions, data segment, hex memory dump (find/goto), stack & call stack — all collapsible
 - CRT console with DOS INT 21h / BIOS INT 10h / INT 16h I/O
 - Broad 8086 instruction coverage (interpretive engine)
 - Short share links (`/s/{code}`) with 1 / 3 / 7 day expiry, QR code, dedup; legacy `?p=` still loads
 - Light/dark themes, accent color; Undo / Redo / Copy icons in Source panel
-- Editor: indent-on-Enter, format document, tab size / word wrap
+- Editor: 8086 syntax highlighting, indent-on-Enter, format document, tab size / word wrap
 - Help tools: ASCII table, number converter, shortcuts, changelog, About
 - Copy error for AI assistants from the error bar
 - Resizable editor / console / CPU panels; responsive mobile & desktop layout
@@ -98,8 +99,8 @@ bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 an
 1. Write assembly or load a sample.
 2. **Compile** (F5), then **Step** (F8) or **Run**.
 3. Click gutter line numbers for breakpoints.
-4. Use **+** on the tab bar for new files; double-click a tab to rename.
-5. **Save** / **Save as** downloads the active file by name.
+4. Use **+** on the tab bar for new files; double-click a tab to rename. Closing a tab keeps the file in the project — delete from the Explorer to remove it.
+5. **Save** writes back to disk for folder files, otherwise downloads the active file by name; **Save as** always downloads.
 6. **Share** opens a dialog — pick expiry, generate short URL + QR.
 7. **Help** → ASCII codes, converters, About, Settings (modal).
 8. Undo / Redo / Copy icons sit next to the file name in the Source panel.

@@ -1,5 +1,5 @@
 /**
- * Native application menu (v1.3.0 offline desktop shell).
+ * Native application menu (v1.3.0 offline desktop shell + v1.4.0 folders).
  *
  * IDE actions are forwarded to the renderer over the
  * `"emu8086web:menu"` channel — action ids are plain strings so the web
@@ -61,6 +61,8 @@ function buildAppMenu({ appName, isDev, onCheckForUpdates }) {
     submenu: [
       { label: "New File…", click: clickSend("file:new") },
       { label: "Open File…", click: clickSend("file:open") },
+      { label: "Open Folder…", click: clickSend("file:open-folder") },
+      { label: "Close Folder", click: clickSend("file:close-folder") },
       { type: "separator" },
       { label: "Save", click: clickSend("file:save") },
       { label: "Save As…", click: clickSend("file:save-as") },

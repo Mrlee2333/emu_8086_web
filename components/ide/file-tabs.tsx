@@ -1,12 +1,14 @@
 "use client";
 
+import { IconFilePlus } from "@/components/ide/editor-icons";
+
 interface FileTabsProps {
   files: { id: string; name: string; dirty: boolean }[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
-  onRename: (id: string, name: string) => void;
+  onRename: (id: string) => void;
 }
 
 export function FileTabs({
@@ -34,11 +36,8 @@ export function FileTabs({
               type="button"
               className="min-w-0 flex-1 truncate text-left font-mono"
               onClick={() => onSelect(f.id)}
-              onDoubleClick={() => {
-                const next = window.prompt("Rename file", f.name);
-                if (next) onRename(f.id, next);
-              }}
-              title={f.name}
+              onDoubleClick={() => onRename(f.id)}
+              title={`${f.name} (double-click to rename)`}
             >
               {f.dirty ? "• " : ""}
               {f.name}
@@ -46,7 +45,8 @@ export function FileTabs({
             <button
               type="button"
               className="rounded px-1 text-ink-dim opacity-60 hover:bg-line hover:text-red hover:opacity-100"
-              title="Close file"
+              title="Close tab (keeps the project file)"
+              aria-label={`Close ${f.name}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(f.id);
@@ -59,11 +59,12 @@ export function FileTabs({
       })}
       <button
         type="button"
-        className="shrink-0 px-3 text-sm text-ink-dim hover:text-amber"
+        className="flex shrink-0 items-center px-3 text-ink-dim hover:text-amber"
         title="New file"
+        aria-label="New file"
         onClick={onNew}
       >
-        +
+        <IconFilePlus />
       </button>
     </div>
   );

@@ -1,5 +1,5 @@
 /**
- * Electron main process (v1.3.0 offline desktop shell).
+ * Electron main process (v1.3.0 offline desktop shell + v1.4.0 folder workspace).
  *
  * Packaged mode: forks the Next standalone server bundled at
  * `.next/standalone/server.js` on a free loopback port, waits for
@@ -8,10 +8,15 @@
  *
  * Dev mode (`ELECTRON_START_URL` set by `electron:dev`): loads the running
  * `next dev` server instead of spawning one.
+ *
+ * Folder workspace: scoped IPC (`emu8086web:*`) lets the renderer open one
+ * user-picked directory and read/write `.asm`/`.txt`/`.inc` files inside it.
+ * Every relPath is validated and confined to the picked root.
  */
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { buildAppMenu, showUpdateError } = require("./menu");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs/promises");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
@@ -263,6 +268,249 @@ function showFatal(message) {
   dialog.showErrorBox("emu8086web failed to start", message);
 }
 
+/* ---- v1.4.0 folder workspace (scoped, root-confined file access) ----
+ *
+ * Trust model (review fix): the renderer NEVER supplies the root. The main
+ * process remembers the user-picked directory (`allowedRoot`, persisted in
+ * the app's userData dir which the renderer cannot write), and every
+ * relPath is validated + resolved inside it.
+ */
+const {
+  MAX_FOLDER_ENTRIES,
+  MAX_FOLDER_FILE_BYTES,
+  hasNoDotSegments,
+  isSafeRelPath,
+  isListableFile,
+  isSourceFileRel,
+} = require("./folder-guards");
+
+/** Main-side allowed root (set by the native folder picker only). */
+let allowedRoot = null;
+let allowedName = "";
+
+function folderStatePath() {
+  return path.join(app.getPath("userData"), "emu8086web-folder.json");
+}
+
+function persistAllowedRoot() {
+  try {
+    const fsSync = require("node:fs");
+    fsSync.mkdirSync(app.getPath("userData"), { recursive: true });
+    fsSync.writeFileSync(
+      folderStatePath(),
+      JSON.stringify({ root: allowedRoot, name: allowedName }),
+      "utf8",
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+function restoreAllowedRoot() {
+  try {
+    const fsSync = require("node:fs");
+    const raw = fsSync.readFileSync(folderStatePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.root === "string" &&
+      fsSync.statSync(parsed.root).isDirectory()
+    ) {
+      allowedRoot = parsed.root;
+      allowedName = typeof parsed.name === "string" ? parsed.name : "";
+    }
+  } catch {
+    /* none stored or folder gone */
+  }
+}
+
+function clearAllowedRoot() {
+  allowedRoot = null;
+  allowedName = "";
+  try {
+    require("node:fs").rmSync(folderStatePath(), { force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Resolve `rel` inside the allowed root. Uses path.relative so the check
+ * holds on case-insensitive filesystems (Windows) too, then re-resolves
+ * symlinks with realpath so a linked dir/file can't escape confinement.
+ */
+async function resolveInside(rel) {
+  if (!allowedRoot) throw new Error("No folder open");
+  if (!isSafeRelPath(rel)) throw new Error("Invalid path");
+  const absRoot = await fs.realpath(path.resolve(allowedRoot));
+  const target = path.resolve(absRoot, rel);
+  const real = await fs.realpath(target).catch(() => target);
+  const relCheck = path.relative(absRoot, real);
+  if (relCheck === ".." || relCheck.startsWith(`..${path.sep}`) || path.isAbsolute(relCheck)) {
+    throw new Error("Path escapes the opened folder");
+  }
+  return target;
+}
+
+/** Resolve a mutable source FILE (extension + dotfile policy enforced). */
+async function resolveSourceFile(rel) {
+  if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
+  return resolveInside(rel);
+}
+
+/** Resolve a mutable DIRECTORY (no hidden segments). */
+async function resolveSourceDir(rel) {
+  if (!isSafeRelPath(rel) || !hasNoDotSegments(rel)) {
+    throw new Error("Invalid folder path");
+  }
+  return resolveInside(rel);
+}
+
+async function listFolderRecursive(root) {
+  const absRoot = path.resolve(root);
+  const out = [];
+  const stack = [""];
+  while (stack.length > 0 && out.length < MAX_FOLDER_ENTRIES) {
+    const relDir = stack.pop();
+    const absDir = relDir ? path.join(absRoot, relDir) : absRoot;
+    let entries = [];
+    try {
+      entries = await fs.readdir(absDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith(".")) continue;
+      // Never follow symlinks out of the workspace.
+      if (e.isSymbolicLink()) continue;
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        out.push({ relPath: rel, isDirectory: true });
+        stack.push(rel);
+      } else if (e.isFile() && isListableFile(e.name)) {
+        out.push({ relPath: rel, isDirectory: false });
+      }
+      if (out.length >= MAX_FOLDER_ENTRIES) break;
+    }
+  }
+  out.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.relPath.localeCompare(b.relPath);
+  });
+  return out;
+}
+
+let folderIpcRegistered = false;
+
+function registerFolderIpc() {
+  if (folderIpcRegistered) return;
+  folderIpcRegistered = true;
+
+  ipcMain.handle("emu8086web:open-folder", async () => {
+    const res = await dialog.showOpenDialog(focusedWindow() ?? undefined, {
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    allowedRoot = res.filePaths[0];
+    allowedName = path.basename(allowedRoot) || allowedRoot;
+    persistAllowedRoot();
+    return { root: allowedRoot, name: allowedName };
+  });
+
+  ipcMain.handle("emu8086web:get-folder", async () => {
+    if (!allowedRoot) return null;
+    return { root: allowedRoot, name: allowedName };
+  });
+
+  ipcMain.handle("emu8086web:close-folder", async () => {
+    clearAllowedRoot();
+  });
+
+  ipcMain.handle("emu8086web:list-folder", async () => {
+    if (!allowedRoot) throw new Error("No folder open");
+    return listFolderRecursive(allowedRoot);
+  });
+
+  ipcMain.handle("emu8086web:read-folder-file", async (_e, rel) => {
+    const abs = await resolveSourceFile(rel);
+    const st = await fs.stat(abs);
+    if (!st.isFile()) throw new Error("Not a file");
+    if (st.size > MAX_FOLDER_FILE_BYTES) throw new Error("File too large (256 KiB cap)");
+    return fs.readFile(abs, "utf8");
+  });
+
+  ipcMain.handle(
+    "emu8086web:write-folder-file",
+    async (_e, rel, content) => {
+      if (typeof content !== "string") throw new Error("Invalid content");
+      if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
+        throw new Error("File too large (256 KiB cap)");
+      }
+      const abs = await resolveSourceFile(rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, content, "utf8");
+    },
+  );
+
+  ipcMain.handle(
+    "emu8086web:create-folder-entry",
+    async (_e, rel, isDirectory) => {
+      if (isDirectory !== true && isDirectory !== false) {
+        throw new Error("Invalid isDirectory");
+      }
+      if (isDirectory) {
+        const abs = await resolveSourceDir(rel);
+        await fs.mkdir(abs, { recursive: true });
+      } else {
+        const abs = await resolveSourceFile(rel);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        try {
+          const handle = await fs.open(abs, "wx");
+          await handle.close();
+        } catch (err) {
+          if (err && err.code === "EEXIST") throw new Error("Already exists");
+          throw err;
+        }
+      }
+    },
+  );
+
+  ipcMain.handle("emu8086web:rename-folder-entry", async (_e, oldRel, newRel) => {
+    if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
+      throw new Error("Invalid path");
+    }
+    if (!hasNoDotSegments(oldRel) || !hasNoDotSegments(newRel)) {
+      throw new Error("Invalid path");
+    }
+    const newLeaf = newRel.split(/[\\/]/).pop() || "";
+    if (newLeaf.includes(".") && !isListableFile(newLeaf)) {
+      throw new Error("Only .asm/.txt/.inc files");
+    }
+    const from = await resolveInside(oldRel);
+    const to = await resolveInside(newRel);
+    try {
+      await fs.access(to);
+      throw new Error("Already exists");
+    } catch (err) {
+      if (err && err.message === "Already exists") throw err;
+      // ENOENT → target free, proceed.
+    }
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.rename(from, to);
+  });
+
+  ipcMain.handle("emu8086web:delete-folder-entry", async (_e, rel) => {
+    if (!hasNoDotSegments(rel)) throw new Error("Invalid path");
+    const abs = await resolveInside(rel);
+    const st = await fs.lstat(abs);
+    // Directories stay deletable; files must be mutable source files.
+    if (!st.isDirectory() && !isSourceFileRel(rel)) {
+      throw new Error("Only .asm/.txt/.inc files");
+    }
+    await fs.rm(abs, { recursive: true, force: true });
+  });
+}
+
 app.whenReady().then(() => {
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
@@ -280,6 +528,8 @@ app.whenReady().then(() => {
       onCheckForUpdates: () => manualCheckForUpdates(),
     }),
   );
+  restoreAllowedRoot();
+  registerFolderIpc();
   setupAutoUpdater();
 
   const start = DEV_URL

@@ -8,6 +8,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.0",
+    date: "2026-09-23",
+    highlights: [
+      "Folder workspace: open any folder, browse .asm/.txt/.inc tree, create/rename/delete files + subfolders (Electron desktop + Chromium File System Access)",
+      "Collapsible Explorer sidebar with Hide/Show toggle (persisted) + native File → Open/Close Folder menu",
+      "Folder-backed Save: Ctrl+S writes straight back to disk instead of downloading",
+      "8086 syntax highlighting: registers, mnemonics, directives, labels, numbers, strings, comments (both themes)",
+      "ALU panel: live next-operation + affected flags, mirroring the original emu8086 ALU view",
+      "In-app name/confirm dialogs (fixes Electron prompt() crash); Overleaf-like virtual project + export in plain browsers",
+      "VS Code tabs, collapsible CPU panels, single-file .zip export, empty-folder fix",
+    ],
+  },
+  {
     version: "1.3.2",
     date: "2026-09-23",
     highlights: [
