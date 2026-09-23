@@ -1,5 +1,5 @@
 /**
- * Electron main process (v1.3.0 offline desktop shell).
+ * Electron main process (v1.3.0 offline desktop shell + v1.4.0 folder workspace).
  *
  * Packaged mode: forks the Next standalone server bundled at
  * `.next/standalone/server.js` on a free loopback port, waits for
@@ -8,10 +8,15 @@
  *
  * Dev mode (`ELECTRON_START_URL` set by `electron:dev`): loads the running
  * `next dev` server instead of spawning one.
+ *
+ * Folder workspace: scoped IPC (`emu8086web:*`) lets the renderer open one
+ * user-picked directory and read/write `.asm`/`.txt`/`.inc` files inside it.
+ * Every relPath is validated and confined to the picked root.
  */
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { buildAppMenu, showUpdateError } = require("./menu");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs/promises");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
@@ -263,6 +268,144 @@ function showFatal(message) {
   dialog.showErrorBox("emu8086web failed to start", message);
 }
 
+/* ---- v1.4.0 folder workspace (scoped, root-confined file access) ---- */
+
+const MAX_FOLDER_ENTRIES = 2000;
+const MAX_FOLDER_FILE_BYTES = 256 * 1024;
+const LISTABLE_EXT = new Set(["asm", "txt", "inc"]);
+
+function isSafeRelPath(rel) {
+  if (typeof rel !== "string" || rel.length === 0) return false;
+  if (rel.includes("\0")) return false;
+  if (/^[/\\]/.test(rel) || /^[a-zA-Z]:/.test(rel)) return false;
+  if (rel.split(/[\\/]/).some((p) => p === "..")) return false;
+  if (/[\x00-\x1f\x7f]/.test(rel)) return false;
+  return true;
+}
+
+function resolveInside(root, rel) {
+  const absRoot = path.resolve(root);
+  const target = path.resolve(absRoot, rel);
+  if (target !== absRoot && !target.startsWith(absRoot + path.sep)) {
+    throw new Error("Path escapes the opened folder");
+  }
+  return target;
+}
+
+function isListableFile(name) {
+  const base = name.split(/[\\/]/).pop() || "";
+  if (!base || base.startsWith(".")) return false;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return false;
+  return LISTABLE_EXT.has(base.slice(dot + 1).toLowerCase());
+}
+
+async function listFolderRecursive(root) {
+  const absRoot = path.resolve(root);
+  const out = [];
+  const stack = [""];
+  while (stack.length > 0 && out.length < MAX_FOLDER_ENTRIES) {
+    const relDir = stack.pop();
+    const absDir = relDir ? path.join(absRoot, relDir) : absRoot;
+    let entries = [];
+    try {
+      entries = await fs.readdir(absDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith(".")) continue;
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        out.push({ relPath: rel, isDirectory: true });
+        stack.push(rel);
+      } else if (e.isFile() && isListableFile(e.name)) {
+        out.push({ relPath: rel, isDirectory: false });
+      }
+      if (out.length >= MAX_FOLDER_ENTRIES) break;
+    }
+  }
+  out.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.relPath.localeCompare(b.relPath);
+  });
+  return out;
+}
+
+let folderIpcRegistered = false;
+
+function registerFolderIpc() {
+  if (folderIpcRegistered) return;
+  folderIpcRegistered = true;
+
+  ipcMain.handle("emu8086web:open-folder", async () => {
+    const res = await dialog.showOpenDialog(focusedWindow() ?? undefined, {
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    const root = res.filePaths[0];
+    return { root, name: path.basename(root) || root };
+  });
+
+  ipcMain.handle("emu8086web:list-folder", async (_e, root) => {
+    if (typeof root !== "string" || !root) throw new Error("No folder open");
+    return listFolderRecursive(root);
+  });
+
+  ipcMain.handle("emu8086web:read-folder-file", async (_e, root, rel) => {
+    if (!isSafeRelPath(rel)) throw new Error("Invalid path");
+    const abs = resolveInside(root, rel);
+    const st = await fs.stat(abs);
+    if (!st.isFile()) throw new Error("Not a file");
+    if (st.size > MAX_FOLDER_FILE_BYTES) throw new Error("File too large (256 KiB cap)");
+    return fs.readFile(abs, "utf8");
+  });
+
+  ipcMain.handle(
+    "emu8086web:write-folder-file",
+    async (_e, root, rel, content) => {
+      if (!isSafeRelPath(rel)) throw new Error("Invalid path");
+      if (typeof content !== "string") throw new Error("Invalid content");
+      if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
+        throw new Error("File too large (256 KiB cap)");
+      }
+      const abs = resolveInside(root, rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, content, "utf8");
+    },
+  );
+
+  ipcMain.handle(
+    "emu8086web:create-folder-entry",
+    async (_e, root, rel, isDirectory) => {
+      if (!isSafeRelPath(rel)) throw new Error("Invalid path");
+      const abs = resolveInside(root, rel);
+      if (isDirectory) await fs.mkdir(abs, { recursive: true });
+      else {
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        const handle = await fs.open(abs, "wx").catch(() => null);
+        if (handle) await handle.close();
+      }
+    },
+  );
+
+  ipcMain.handle("emu8086web:rename-folder-entry", async (_e, root, oldRel, newRel) => {
+    if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
+      throw new Error("Invalid path");
+    }
+    const from = resolveInside(root, oldRel);
+    const to = resolveInside(root, newRel);
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.rename(from, to);
+  });
+
+  ipcMain.handle("emu8086web:delete-folder-entry", async (_e, root, rel) => {
+    if (!isSafeRelPath(rel)) throw new Error("Invalid path");
+    const abs = resolveInside(root, rel);
+    await fs.rm(abs, { recursive: true, force: true });
+  });
+}
+
 app.whenReady().then(() => {
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
@@ -280,6 +423,7 @@ app.whenReady().then(() => {
       onCheckForUpdates: () => manualCheckForUpdates(),
     }),
   );
+  registerFolderIpc();
   setupAutoUpdater();
 
   const start = DEV_URL

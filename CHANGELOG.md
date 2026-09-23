@@ -2,6 +2,24 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.4.0] — 2026-09-23
+
+### Added
+
+- Folder workspace (VS Code-like Explorer): open any folder and browse `.asm` / `.txt` / `.inc` in a tree; create, rename, and delete files + subfolders
+  - Electron desktop: scoped IPC (`open-folder`, `list`, `read`, `write`, `create`, `rename`, `delete`) confined to the picked root, 256 KiB file cap, 2000-entry list cap; native File → Open Folder… / Close Folder menu
+  - Web: File System Access picker (`showDirectoryPicker`) on Chromium with the same caps; graceful guidance elsewhere
+  - Collapsible left sidebar with Hide/Show Explorer toggle (persisted in localStorage, keyboard-accessible)
+  - Folder-backed tabs: opening a tree file creates a tab; Ctrl+S writes back to disk, other files keep the download flow
+  - Pure tree model (`lib/ide/workspace-folders.ts`) + path guards (`lib/electron/folder-security.ts`) with `node:test` suites
+- 8086 editor basics from the original Windows emu8086:
+  - Syntax highlighting overlay (registers, mnemonics, directives, labels, numbers, strings, `;` comments) in both themes; textarea stays the edit source
+  - ALU panel in the CPU column: describes the next instruction and its affected flags (e.g. `ADD AX, 1 — updates CF PF AF ZF SF OF`)
+
+### Security
+
+- Folder IPC validates every relPath (no traversal, absolute, drive-letter, or control-char paths) and resolves inside the opened root before any fs call
+
 ## [1.3.2] — 2026-09-23
 
 ### Added

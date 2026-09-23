@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -14,6 +15,7 @@ import {
   formatAsmSelection,
   indentAfterEnter,
 } from "@/lib/ide/format-asm";
+import { tokenClass, tokenizeAsmLine } from "@/lib/ide/asm-highlight";
 import type { TabSize } from "@/lib/ide/editor-prefs";
 import {
   loadOverrides,
@@ -74,9 +76,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
   ) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLPreElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const lineCount = source.split("\n").length;
   const indent = " ".repeat(tabSize);
+
+  // v1.4.0 syntax highlight rows (capped so huge pastes stay responsive).
+  const highlightRows = useMemo(() => {
+    const lines = source.split("\n");
+    if (lines.length > 5000) return null;
+    return lines.map((line) => tokenizeAsmLine(line));
+  }, [source]);
 
   const historyRef = useRef<string[]>([source]);
   const histIndexRef = useRef(0);
@@ -195,8 +205,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
   const syncScroll = useCallback(() => {
     const ta = textareaRef.current;
     const gutter = gutterRef.current;
+    const hl = highlightRef.current;
     if (ta) setScrollTop(ta.scrollTop);
     if (ta && gutter) gutter.scrollTop = ta.scrollTop;
+    if (ta && hl) {
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
+    }
   }, []);
 
   useEffect(() => {
@@ -493,6 +508,32 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           />
         )}
 
+        {highlightRows ? (
+          <pre
+            ref={highlightRef}
+            aria-hidden
+            className={`pointer-events-none absolute inset-0 z-0 overflow-hidden px-3.5 py-3 font-mono text-[13px] leading-5 ${
+              wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+            }`}
+            style={{ tabSize }}
+          >
+            {highlightRows.map((tokens, i) => (
+              <div key={i} className="leading-5">
+                {tokens.length === 0 ? (
+                  <span>&nbsp;</span>
+                ) : (
+                  tokens.map((t, j) => (
+                    <span key={j} className={tokenClass(t.kind)}>
+                      {t.value}
+                    </span>
+                  ))
+                )}
+                {i < highlightRows.length - 1 ? null : null}
+              </div>
+            ))}
+          </pre>
+        ) : null}
+
         <textarea
           ref={textareaRef}
           value={source}
@@ -501,7 +542,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           onScroll={syncScroll}
           spellCheck={false}
           wrap={wordWrap ? "soft" : "off"}
-          className={`relative z-[3] h-full min-h-0 w-full resize-none border-none bg-transparent px-3.5 py-3 font-mono text-[13px] leading-5 text-ink caret-amber outline-none ${
+          className={`relative z-[3] h-full min-h-0 w-full resize-none border-none bg-transparent px-3.5 py-3 font-mono text-[13px] leading-5 text-transparent caret-amber outline-none selection:bg-[var(--highlight-border)] ${
             wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
           }`}
           style={{ tabSize }}

@@ -1,6 +1,15 @@
 @import "tailwindcss";
 
 :root {
+  /* v1.4.0 ASM token palette (VS Code Dark+ inspired, brand sky for mnemonics) */
+  --tok-comment: #6b7a90;
+  --tok-string: #ce9178;
+  --tok-number: #b5cea8;
+  --tok-register: #9cdcfe;
+  --tok-mnemonic: #64d2ff;
+  --tok-directive: #c586c0;
+  --tok-label: #dcdcaa;
+  --tok-punct: #94a3b8;
   /* Night lab — deep slate + sky accent (not olive CRT chrome) */
   --bg: #0a0f1a;
   --panel: #111827;
@@ -31,6 +40,14 @@
 }
 
 [data-theme="light"] {
+  --tok-comment: #6c7264;
+  --tok-string: #a31515;
+  --tok-number: #098658;
+  --tok-register: #0451a5;
+  --tok-mnemonic: #b3690a;
+  --tok-directive: #af00db;
+  --tok-label: #795e26;
+  --tok-punct: #6c7264;
   --bg: #f4f5f0;
   --panel: #ffffff;
   --panel-2: #eceee6;
@@ -234,3 +251,14 @@ body {
   color: var(--red);
   border-color: var(--red);
 }
+
+/* v1.4.0 ASM syntax highlight overlay (behind the transparent textarea) */
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-string { color: var(--tok-string); }
+.tok-number { color: var(--tok-number); }
+.tok-register { color: var(--tok-register); font-weight: 600; }
+.tok-mnemonic { color: var(--tok-mnemonic); font-weight: 600; }
+.tok-directive { color: var(--tok-directive); }
+.tok-label { color: var(--tok-label); font-weight: 600; }
+.tok-punct { color: var(--tok-punct); }
+.tok-text { color: var(--ink); }
