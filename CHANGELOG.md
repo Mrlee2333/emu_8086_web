@@ -24,6 +24,9 @@ All notable changes to emu8086web are documented in this file.
 
 - Replaced `window.prompt()` / `window.confirm()` with in-app dialogs — `prompt()` throws in Electron, which crashed New file/folder, rename, delete, and Save-as flows
 - Browsers without a disk folder now get an Overleaf-like virtual project in the Explorer (create/rename/delete multiple files, export all) instead of an empty panel
+- Tabs behave like VS Code: closing a tab keeps the project file (open tabs persist across reloads); only the Explorer trash deletes from the project
+- Electron opens filesystem-first (Open-folder welcome state, last folder restored) instead of the virtual project
+- Explorer icon buttons show instant hover tooltips; Hide Explorer lives in the panel header with an icon-only rail to reopen
 
 ## [1.3.2] — 2026-09-23
 

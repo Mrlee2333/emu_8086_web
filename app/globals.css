@@ -252,6 +252,39 @@ body {
   border-color: var(--red);
 }
 
+/* v1.4.0 instant icon tooltips (VS Code-style; native title kept as fallback) */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: -4px;
+  z-index: 60;
+  max-width: 220px;
+  width: max-content;
+  white-space: normal;
+  pointer-events: none;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: var(--font-plex-sans), system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-tip]:hover::after {
+    transition: none;
+  }
+}
+
 /* v1.4.0 ASM syntax highlight overlay (behind the transparent textarea) */
 .tok-comment { color: var(--tok-comment); font-style: italic; }
 .tok-string { color: var(--tok-string); }

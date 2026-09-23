@@ -10,12 +10,18 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconPanelLeft,
   IconPencil,
   IconRefresh,
   IconTrash,
   IconX,
 } from "@/components/ide/editor-icons";
 import type { VisibleRow } from "@/lib/ide/workspace-folders";
+
+type CollapseProp = {
+  /** Hide the whole Explorer (button sits top-left, after the heading). */
+  onCollapse: () => void;
+};
 
 type DiskExplorerProps = {
   mode: "disk";
@@ -31,7 +37,7 @@ type DiskExplorerProps = {
   onDelete: (relPath: string) => void;
   onRefresh: () => void;
   onCloseFolder: () => void;
-};
+} & CollapseProp;
 
 type VirtualExplorerProps = {
   mode: "virtual";
@@ -43,9 +49,18 @@ type VirtualExplorerProps = {
   onDelete: (id: string) => void;
   onExport: () => void;
   onOpenFolder: () => void;
-};
+} & CollapseProp;
 
-export type FolderExplorerProps = DiskExplorerProps | VirtualExplorerProps;
+type EmptyExplorerProps = {
+  /** Electron with no folder open: invite opening the real filesystem. */
+  mode: "empty";
+  onOpenFolder: () => void;
+} & CollapseProp;
+
+export type FolderExplorerProps =
+  | DiskExplorerProps
+  | VirtualExplorerProps
+  | EmptyExplorerProps;
 
 function IconBtn({
   title,
@@ -66,6 +81,7 @@ function IconBtn({
       }`}
       title={title}
       aria-label={title}
+      data-tip={title}
       onClick={onClick}
     >
       {children}
@@ -95,6 +111,7 @@ function DiskView(props: DiskExplorerProps) {
     onDelete,
     onRefresh,
     onCloseFolder,
+    onCollapse,
   } = props;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -118,6 +135,9 @@ function DiskView(props: DiskExplorerProps) {
           </IconBtn>
           <IconBtn title="Close folder" onClick={onCloseFolder}>
             <IconX />
+          </IconBtn>
+          <IconBtn title="Hide Explorer" onClick={onCollapse}>
+            <IconPanelLeft />
           </IconBtn>
         </span>
       </div>
@@ -218,6 +238,36 @@ function DiskView(props: DiskExplorerProps) {
   );
 }
 
+function EmptyView(props: EmptyExplorerProps) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionLabel>Explorer</SectionLabel>
+      <div className="flex items-center justify-between gap-1 px-2 pb-1">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-ink">
+          No folder open
+        </span>
+        <span className="flex shrink-0 items-center">
+          <IconBtn title="Hide Explorer" onClick={props.onCollapse}>
+            <IconPanelLeft />
+          </IconBtn>
+        </span>
+      </div>
+      <div className="flex flex-col items-start gap-2 px-3 py-2">
+        <p className="text-xs text-ink-dim">
+          Open a folder to browse and edit .asm files on disk.
+        </p>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={props.onOpenFolder}
+        >
+          Open folder…
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function VirtualView(props: VirtualExplorerProps) {
   const {
     files,
@@ -228,6 +278,7 @@ function VirtualView(props: VirtualExplorerProps) {
     onDelete,
     onExport,
     onOpenFolder,
+    onCollapse,
   } = props;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -254,6 +305,9 @@ function VirtualView(props: VirtualExplorerProps) {
             onClick={onOpenFolder}
           >
             <IconFolderOpen />
+          </IconBtn>
+          <IconBtn title="Hide Explorer" onClick={onCollapse}>
+            <IconPanelLeft />
           </IconBtn>
         </span>
       </div>
@@ -329,5 +383,6 @@ function VirtualView(props: VirtualExplorerProps) {
  */
 export function FolderExplorer(props: FolderExplorerProps) {
   if (props.mode === "disk") return <DiskView {...props} />;
+  if (props.mode === "empty") return <EmptyView {...props} />;
   return <VirtualView {...props} />;
 }

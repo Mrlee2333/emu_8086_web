@@ -37,6 +37,7 @@ import { WatchPanel } from "@/components/ide/watch-panel";
 import { WebMcpBootstrap } from "@/components/ide/webmcp-bootstrap";
 import { useEmulator } from "@/lib/ide/use-emulator";
 import { isAdsEnabled } from "@/lib/adsense";
+import { isElectronRenderer } from "@/lib/electron/offline";
 import {
   applyAccent,
   FONT_SCALE_KEY,
@@ -71,6 +72,7 @@ import {
 import {
   createDefaultFile,
   createFileId,
+  ELECTRON_ROOT_KEY,
   ensureAsmExtension,
   isOpenableSize,
   loadFilesFromStorage,
@@ -96,6 +98,8 @@ import {
 export function IdeWorkspace() {
   const [files, setFiles] = useState<WorkspaceFile[]>(() => [createDefaultFile()]);
   const [activeId, setActiveId] = useState(() => files[0]?.id ?? "");
+  // Open editor tabs — VS Code semantics: closing a tab keeps the project file.
+  const [openIds, setOpenIds] = useState<string[]>(() => [files[0]?.id ?? ""]);
   const [hydrated, setHydrated] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [leftPct, setLeftPct] = useState(58);
@@ -161,9 +165,20 @@ export function IdeWorkspace() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
+  // openTabs mirrors openIds order (tabs); project files live in `files`.
+  const openTabs = useMemo(
+    () =>
+      openIds
+        .map((id) => files.find((f) => f.id === id))
+        .filter((f): f is WorkspaceFile => f !== undefined),
+    [files, openIds],
+  );
   const active = useMemo(
-    () => files.find((f) => f.id === activeId) ?? null,
-    [files, activeId],
+    () =>
+      openIds.includes(activeId)
+        ? (files.find((f) => f.id === activeId) ?? null)
+        : null,
+    [files, activeId, openIds],
   );
   const hasFiles = files.length > 0;
 
@@ -187,6 +202,7 @@ export function IdeWorkspace() {
       file.content = sharedSource;
       setFiles([file]);
       setActiveId(file.id);
+      setOpenIds([file.id]);
       lastSynced.current = file.id;
       emu.setSource(sharedSource);
       setMemoryShare(sharedSource);
@@ -224,6 +240,9 @@ export function IdeWorkspace() {
         if (stored) {
           setFiles(stored.files);
           setActiveId(stored.activeId);
+          setOpenIds(
+            stored.openIds ?? stored.files.map((f) => f.id),
+          );
           lastSynced.current = null;
         }
         setHydrated(true);
@@ -237,6 +256,7 @@ export function IdeWorkspace() {
       if (stored) {
         setFiles(stored.files);
         setActiveId(stored.activeId);
+        setOpenIds(stored.openIds ?? stored.files.map((f) => f.id));
         lastSynced.current = null;
       }
       setHydrated(true);
@@ -266,6 +286,40 @@ export function IdeWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefs once on mount
   }, []);
 
+  // Restore the last Electron folder on launch (real FS outlives reloads).
+  useEffect(() => {
+    if (!isElectronRenderer()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = localStorage.getItem(ELECTRON_ROOT_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as { root?: string; name?: string };
+        if (!parsed.root || !window.electronAPI?.listFolder) return;
+        const entries = await window.electronAPI.listFolder(parsed.root);
+        if (cancelled) return;
+        electronRootRef.current = parsed.root;
+        folderBackendRef.current = "electron";
+        const name = parsed.name || parsed.root.split("/").pop() || parsed.root;
+        setFolderName(name);
+        const tree = buildTreeFromPaths(
+          (entries ?? []).map((e) => e.relPath),
+        );
+        tree.name = name;
+        setFolderRoot(tree);
+      } catch {
+        try {
+          localStorage.removeItem(ELECTRON_ROOT_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
@@ -291,8 +345,8 @@ export function IdeWorkspace() {
 
   useEffect(() => {
     if (!hydrated) return;
-    saveFilesToStorage(files, activeId);
-  }, [files, activeId, hydrated]);
+    saveFilesToStorage(files, activeId, openIds);
+  }, [files, activeId, openIds, hydrated]);
 
   const persistTabSize = useCallback((size: TabSize) => {
     setTabSize(size);
@@ -366,6 +420,14 @@ export function IdeWorkspace() {
         setFolderRoot(root);
         setSelectedFolderPath(null);
         setSidebarCollapsed(false);
+        try {
+          localStorage.setItem(
+            ELECTRON_ROOT_KEY,
+            JSON.stringify({ root: picked.root, name: picked.name }),
+          );
+        } catch {
+          /* best-effort */
+        }
         showToast(`Opened folder ${picked.name}`);
         return;
       }
@@ -401,6 +463,11 @@ export function IdeWorkspace() {
     webDirRef.current = null;
     folderBackendRef.current = null;
     folderPathByFileIdRef.current.clear();
+    try {
+      localStorage.removeItem(ELECTRON_ROOT_KEY);
+    } catch {
+      /* best-effort */
+    }
   }, []);
 
   const toggleFolder = useCallback((relPath: string) => {
@@ -420,6 +487,7 @@ export function IdeWorkspace() {
       for (const f of files) {
         if (folderPathByFileIdRef.current.get(f.id) === relPath) {
           const id = f.id;
+          setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
           setFiles((prev) => {
             const flushed = prev.map((item) =>
               item.id === activeId ? { ...item, content: emu.source } : item,
@@ -459,6 +527,7 @@ export function IdeWorkspace() {
           return [...flushed, file];
         });
         folderPathByFileIdRef.current.set(file.id, relPath);
+        setOpenIds((prev) => [...prev, file.id]);
         setActiveId(file.id);
         setSelectedFolderPath(relPath);
         lastSynced.current = null;
@@ -673,6 +742,7 @@ export function IdeWorkspace() {
   };
 
   const selectFile = (id: string) => {
+    setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setFiles((prev) => {
       const flushed = prev.map((f) =>
         f.id === activeId ? { ...f, content: emu.source } : f,
@@ -708,26 +778,26 @@ export function IdeWorkspace() {
       );
       return [...flushed, file];
     });
+    setOpenIds((prev) => [...prev, file.id]);
     setActiveId(file.id);
     lastSynced.current = null;
   };
 
-  const closeFile = (id: string) => {
+  /**
+   * Close an editor tab (VS Code semantics) — the project file stays in
+   * the Explorer. Disk-backed tabs drop their folder mapping.
+   */
+  const closeTab = (id: string) => {
     folderPathByFileIdRef.current.delete(id);
-    const idx = files.findIndex((f) => f.id === id);
-    const next = files.filter((f) => f.id !== id);
-    setFiles(next);
-    if (next.length === 0) {
-      setActiveId("");
-      lastSynced.current = null;
-      emu.setSource("");
-      return;
-    }
-    if (activeId === id) {
-      const fallback = next[Math.max(0, idx - 1)] ?? next[0];
-      setActiveId(fallback.id);
-      lastSynced.current = null;
-    }
+    const tabs = openIds.includes(id)
+      ? openIds.filter((t) => t !== id)
+      : openIds;
+    setOpenIds(tabs);
+    if (activeId !== id) return;
+    const fallback = tabs[Math.max(0, openIds.indexOf(id) - 1)] ?? "";
+    setActiveId(fallback);
+    lastSynced.current = null;
+    if (!fallback) emu.setSource("");
   };
 
   const renameFile = async (id: string) => {
@@ -754,6 +824,7 @@ export function IdeWorkspace() {
     );
   };
 
+  /** Delete a file from the project itself (Explorer trash). */
   const deleteVirtualFile = async (id: string) => {
     const target = files.find((f) => f.id === id);
     const ok = await askConfirm({
@@ -764,7 +835,8 @@ export function IdeWorkspace() {
       danger: true,
     });
     if (!ok) return;
-    closeFile(id);
+    closeTab(id);
+    setFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
   const handleOpen = () => fileInputRef.current?.click();
@@ -809,6 +881,10 @@ export function IdeWorkspace() {
         );
         return [...flushed, ...opened];
       });
+      setOpenIds((prev) => [
+        ...prev,
+        ...opened.map((f) => f.id).filter((id) => !prev.includes(id)),
+      ]);
       setActiveId(opened[opened.length - 1].id);
       lastSynced.current = null;
       showToast(`Opened ${opened.length} file(s)`);
@@ -928,7 +1004,7 @@ export function IdeWorkspace() {
   };
 
   const handleShare = () => {
-    if (!hasFiles) {
+    if (!active) {
       showToast("Open or create a file first");
       return;
     }
@@ -954,11 +1030,12 @@ export function IdeWorkspace() {
   };
 
   const loadSample = (key: SampleKey) => {
-    if (!hasFiles) {
+    if (!active) {
       const file = createDefaultFile("main.asm");
       file.content = SAMPLES[key];
       setFiles([file]);
       setActiveId(file.id);
+      setOpenIds([file.id]);
       lastSynced.current = null;
     } else {
       updateActiveContent(SAMPLES[key]);
@@ -979,7 +1056,7 @@ export function IdeWorkspace() {
       "file:save": () => handleSave(),
       "file:save-as": () => handleSaveAs(),
       "emu:assemble": () => {
-        if (hasFiles) emu.doAssemble();
+        if (active) emu.doAssemble();
       },
       "emu:run": () => emu.doRun(),
       "emu:pause": () => emu.doPause(),
@@ -1075,7 +1152,7 @@ export function IdeWorkspace() {
 
       if (hit("assemble")) {
         e.preventDefault();
-        if (hasFiles) emu.doAssemble();
+        if (active) emu.doAssemble();
         return;
       }
       if (hit("stepBack")) {
@@ -1148,6 +1225,13 @@ export function IdeWorkspace() {
     };
   });
 
+  // Electron is filesystem-first: empty state invites opening a real
+  // folder instead of the virtual browser project. Plain browsers get the
+  // Overleaf-like virtual project.
+  const isElectronShell = useMemo(() => isElectronRenderer(), []);
+  const collapseSidebar = useCallback(() => setSidebarCollapsed(true), []);
+  const expandSidebar = useCallback(() => setSidebarCollapsed(false), []);
+
   const explorer = !sidebarCollapsed ? (
     <div className="max-h-44 min-h-0 shrink-0 overflow-hidden border-b border-line bg-panel lg:max-h-none lg:w-60 lg:border-r lg:border-b-0">
       {folderRoot ? (
@@ -1165,6 +1249,13 @@ export function IdeWorkspace() {
           onDelete={(rel) => void deleteInFolder(rel)}
           onRefresh={() => void refreshFolder()}
           onCloseFolder={closeFolder}
+          onCollapse={collapseSidebar}
+        />
+      ) : isElectronShell ? (
+        <FolderExplorer
+          mode="empty"
+          onOpenFolder={() => void openFolder()}
+          onCollapse={collapseSidebar}
         />
       ) : (
         <FolderExplorer
@@ -1177,6 +1268,7 @@ export function IdeWorkspace() {
           onDelete={(id) => void deleteVirtualFile(id)}
           onExport={() => void exportProject()}
           onOpenFolder={() => void openFolder()}
+          onCollapse={collapseSidebar}
         />
       )}
     </div>
@@ -1199,14 +1291,14 @@ export function IdeWorkspace() {
 
       <Toolbar
         runState={emu.runState}
-        canRun={hasFiles && !!machine && !machine.halted}
+        canRun={!!active && !!machine && !machine.halted}
         isRunning={emu.runState === "running"}
         canStepBack={emu.canStepBack}
         runSpeed={emu.runSpeed}
         theme={emu.theme}
         fileName={active?.name ?? ""}
         onAssemble={() => {
-          if (!hasFiles) {
+          if (!active) {
             showToast("Open or create a file first");
             return;
           }
@@ -1234,19 +1326,19 @@ export function IdeWorkspace() {
         className="flex min-h-0 flex-col overflow-hidden lg:flex-row"
       >
         {explorer}
-        <button
-          type="button"
-          className="flex shrink-0 items-center justify-center gap-1 border-b border-line bg-panel px-1.5 py-1 text-ink-dim hover:text-amber lg:w-6 lg:flex-col lg:gap-2 lg:border-r lg:border-b-0 lg:py-2"
-          title={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
-          aria-label={sidebarCollapsed ? "Show Explorer" : "Hide Explorer"}
-          aria-expanded={!sidebarCollapsed}
-          onClick={() => setSidebarCollapsed((c) => !c)}
-        >
-          <IconPanelLeft className="h-3.5 w-3.5" />
-          <span className="font-mono text-[10px] tracking-wider uppercase lg:[writing-mode:vertical-lr]">
-            {sidebarCollapsed ? "Explorer" : "Hide"}
-          </span>
-        </button>
+        {sidebarCollapsed ? (
+          <button
+            type="button"
+            className="flex shrink-0 items-start justify-center border-b border-line bg-panel p-1.5 text-ink-dim hover:text-amber lg:w-9 lg:border-r lg:border-b-0 lg:pt-2"
+            title="Show Explorer"
+            aria-label="Show Explorer"
+            aria-expanded={false}
+            data-tip="Show Explorer"
+            onClick={expandSidebar}
+          >
+            <IconPanelLeft className="h-4 w-4" />
+          </button>
+        ) : null}
         <div
           className="flex min-h-0 min-w-0 flex-col bg-bg"
           style={{
@@ -1254,12 +1346,13 @@ export function IdeWorkspace() {
             maxWidth: "100%",
           }}
         >
-          {!hasFiles ? (
+          {!active ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
               <p className="font-mono text-lg text-amber">No file open</p>
               <p className="max-w-sm text-sm text-ink-dim">
-                Create a new assembly file or open an existing `.asm` to
-                start coding.
+                {hasFiles
+                  ? "Pick a file from the Explorer to start editing — closing a tab never deletes the project file."
+                  : "Create a new assembly file or open an existing `.asm` to start coding."}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 <button
@@ -1277,10 +1370,10 @@ export function IdeWorkspace() {
           ) : (
             <>
               <FileTabs
-                files={files}
+                files={openTabs}
                 activeId={activeId}
                 onSelect={selectFile}
-                onClose={closeFile}
+                onClose={closeTab}
                 onNew={() => void newFile()}
                 onRename={(id) => void renameFile(id)}
               />
