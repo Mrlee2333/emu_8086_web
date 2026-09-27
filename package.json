@@ -1,6 +1,6 @@
 {
   "name": "emu8086web",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": false,
   "description": "Modern browser-based 8086 assembler and step debugger for every platform",
   "author": "Nafis Islam Kabbo",
@@ -36,13 +36,15 @@
     "electron:build": "bun run build && node scripts/prepare-electron.mjs",
     "electron:dist:mac": "bun run electron:build && electron-builder --mac dmg --publish never",
     "electron:dist:mac-all": "bun run electron:build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "electron:dist:mac:ci-sim": "bun run electron:build && node scripts/dist-mac-ci-sim.mjs",
+    "verify:mac-bundle": "node scripts/verify-mac-bundle.mjs",
     "electron:publish:mac": "bun run electron:build && electron-builder --mac dmg zip --arm64 --x64 --publish always",
     "dist:mac": "bun run electron:dist:mac",
     "prepare": "husky",
     "verify": "bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.0",
+    "@supabase/supabase-js": "^2.117.2",
     "@vercel/analytics": "^2.0.1",
     "electron-updater": "^6.8.9",
     "next": "16.2.10",
@@ -57,7 +59,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "electron": "^44.4.4",
+    "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.2.10",
@@ -81,6 +83,10 @@
       ".next/static/**/*",
       "public/**/*"
     ],
+    "asarUnpack": [
+      ".next/standalone/**"
+    ],
+    "afterPack": "scripts/after-pack.mjs",
     "mac": {
       "category": "public.app-category.education",
       "icon": "icon.icns",

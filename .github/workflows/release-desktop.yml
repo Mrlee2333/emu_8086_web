@@ -43,6 +43,15 @@ jobs:
         # already published — so assets are uploaded with `gh` below.
         run: bun run electron:dist:mac-all
 
+      - name: Verify packaged bundles
+        # An unsealed bundle (no Contents/_CodeSignature) launches as
+        # "emu8086web.app is damaged and can't be opened", and a bundled
+        # server stuck inside app.asar cannot be spawned. The afterPack
+        # hook seals ad-hoc when CI has no Developer ID identity; this gate
+        # is what stops a broken DMG from reaching a release. Same script
+        # `bun run verify:mac-bundle` runs locally, so they cannot drift.
+        run: bun run verify:mac-bundle
+
       - name: Create the GitHub Release if missing
         run: |
           TAG="v$(node -p "require('./package.json').version")"

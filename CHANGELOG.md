@@ -2,6 +2,37 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.4.1] — 2026-09-26
+
+### Fixed
+
+- **macOS: “emu8086web.app is damaged and can’t be opened”** — release builds shipped an unsealed bundle. CI signs with `CSC_IDENTITY_AUTO_DISCOVERY=false`, which made electron-builder skip signing entirely, so no `Contents/_CodeSignature` was written while the nested Electron binaries still expected sealed resources. macOS reported `code has no resources but signature indicates they must be present` and refused to launch
+- **macOS: infinite instance spawning that froze the machine** — the main process started the bundled server with `spawn(process.execPath, [serverFile])`. A packaged Electron binary does not take a script argument as an entry point, so each spawn booted *another copy of the app*, whose main process spawned another, recursing without bound. The server never actually ran, so no window ever opened
+- **Desktop: bundled server was unreachable** — `.next/standalone` was packed inside `app.asar`, but the main process looked for it at `Contents/Resources/.next/standalone/server.js` and launches it with `spawn`, which cannot read inside an archive. The tree is now unpacked (`asarUnpack`) and the resolver points at the real path, so the app boots its offline server
+- Opening a second copy (e.g. the `/Applications` and `dist/` builds, or a double-click storm) no longer starts another app + server: a single-instance lock focuses the running window
+
+### Added
+
+- `scripts/after-pack.mjs` seals every packaged `.app` ad-hoc when no Developer ID identity is available, and is a no-op once real signing credentials are configured
+- `bun run verify:mac-bundle` — the release gate as a local command: fails unless `codesign --verify --deep --strict` passes, the `CodeResources` seal exists, and the bundled server is present on disk. `release-desktop.yml` runs this exact script, so the two cannot drift
+- `bun run electron:dist:mac:ci-sim` — rebuilds with certificate discovery disabled (the CI path that produced the v1.4.0 defect) and then verifies it, so the artifact you test locally matches the one users download
+- README: a **Verifying a downloaded DMG** section with numbered install, quarantine-clearing, and post-install health-check steps
+
+### Changed
+
+- `ELECTRON_RUN_AS_NODE=1` is now set for the bundled server child (`buildServerChildEnv` in `lib/electron/offline.ts`, with `node:test` coverage), which is what makes the packaged binary execute the server as a script
+- Electron 44.4.5, @supabase/supabase-js 2.117.2
+
+### Known — required after download
+
+Installers are ad-hoc signed and **not notarized**, so macOS blocks a freshly downloaded copy. After dragging the app to Applications, run this once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/emu8086web.app
+```
+
+Then launch normally. The fix above resolves the *seal* defect that made v1.4.0 unlaunchable; this step resolves the separate quarantine block, which only Developer ID signing + notarization can remove permanently. Full steps, including post-install health checks (`codesign --verify`, bundled-server presence, process-count check), are in the README under **Verifying a downloaded DMG**.
+
 ## [1.4.0] — 2026-09-23
 
 ### Added
