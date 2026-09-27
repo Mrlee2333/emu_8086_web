@@ -12,21 +12,40 @@ const adsEnabled = (() => {
   return raw === "1" || raw === "true";
 })();
 
+/**
+ * AdSense needs more than `script-src`.
+ *
+ * Display units are served as an <iframe> that `components/ads/adsense-unit.tsx`
+ * waits for before reporting the slot as filled, so without `frame-src` the
+ * iframe falls back to `default-src 'self'` and every slot renders empty. The
+ * iframes also pull creative images and fire beacons, which `img-src` and
+ * `connect-src` govern. All of these are conditional so the ads-off build
+ * (every self-hosted and desktop install) keeps the tighter default.
+ */
+const adsOrigins = adsEnabled
+  ? [
+      "https://pagead2.googlesyndication.com",
+      "https://googleads.g.doubleclick.net",
+      "https://tpc.googlesyndication.com",
+      "https://www.googletagservices.com",
+      "https://google-analytics.com",
+      "https://www.google-analytics.com",
+    ]
+  : [];
+
 const scriptSrc = [
   "'self'",
   // Next injects inline bootstrap/hydration scripts; these hashes are not
   // static because they vary per build, so 'unsafe-inline' is the pragmatic
   // floor here. 'strict-dynamic' lets the trusted bundles load the rest.
   "'unsafe-inline'",
-  ...(adsEnabled
-    ? [
-        "https://pagead2.googlesyndication.com",
-        "https://googleads.g.doubleclick.net",
-        "https://tpc.googlesyndication.com",
-      ]
-    : []),
+  ...adsOrigins,
   ...(process.env.VERCEL ? ["https://va.vercel-scripts.com"] : []),
 ].join(" ");
+
+const imgSrc = ["'self'", "data:", "blob:", ...adsOrigins].join(" ");
+const connectSrc = ["'self'", ...adsOrigins].join(" ");
+const frameSrc = ["'self'", ...adsOrigins].join(" ");
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -48,9 +67,10 @@ const securityHeaders = [
       "default-src 'self'",
       `script-src ${scriptSrc}`,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
+      `img-src ${imgSrc}`,
       "font-src 'self' data:",
-      "connect-src 'self'",
+      `connect-src ${connectSrc}`,
+      `frame-src ${frameSrc}`,
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

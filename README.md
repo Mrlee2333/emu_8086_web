@@ -116,6 +116,22 @@ bun run verify:mac-bundle   # check the seal + bundled server in dist/
 - Fonts and Vercel Analytics are inert without internet; the IDE itself is unaffected. Ads stay off unless `NEXT_PUBLIC_ENABLE_ADS=1` is set at build time (web and desktop alike).
 - The web deployment is unchanged — `output: "standalone"` in `next.config.ts` also works on Vercel.
 
+### Self-hosting the standalone server
+
+`node .next/standalone/server.js` (or `bun run start` in development) serves the
+app over plain HTTP. Two things to know:
+
+- **Terminate TLS in front of it.** A Content-Security-Policy is sent, but
+  `upgrade-insecure-requests` is deliberately not: it would rewrite assets to
+  `https://` and break a plain-HTTP host, including one reached over a LAN
+  address. HSTS is the right place to force TLS, so set it at your proxy.
+- **Have the proxy set `X-Real-IP`.** Share-link creation is rate limited per
+  client IP, and the app only trusts `X-Real-IP` (`X-Forwarded-For` is
+  client-appendable, so honouring it would let any caller mint a fresh bucket
+  per request). Without a proxy setting that header, every caller collapses
+  into one shared bucket with a looser limit — enough that a single user
+  cannot exhaust an install, but real per-client limiting needs the header.
+
 ### Desktop menu, updates, and releases
 
 - The app menu carries File (New/Open/Open Folder/Close Folder/Save/Save As), Assemble (Compile/Run/Pause/Single Step/Step Back/Reset), standard Edit roles, View zoom/reload, Window, and Help (shortcuts, ASCII codes, converter, issue tracker, GitHub) — all wired into the IDE.

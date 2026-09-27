@@ -112,6 +112,12 @@ export function useEmulator(initialSource?: string) {
     }
   }, []);
 
+  /** True when a tick of either kind is already queued. */
+  const hasPendingTick = useCallback(
+    () => rafRef.current !== null || timerRef.current !== null,
+    [],
+  );
+
   /** Cancel whichever kind of tick is pending. */
   const cancelTick = useCallback(() => {
     if (rafRef.current !== null) {
@@ -445,7 +451,10 @@ export function useEmulator(initialSource?: string) {
       if (!wasRunning) pushHistory(m);
       m.enqueueInput(chars);
       if (keepRunningRef.current) {
-        if (rafRef.current === null) {
+        // Check both tick kinds: a hidden tab runs off a timer, so `rafRef`
+        // alone would be null while a tick is already queued and this would
+        // start a second concurrent loop.
+        if (!hasPendingTick()) {
           setRunState("running");
           accRef.current = 0;
           lastFrameRef.current = performance.now();
@@ -456,7 +465,7 @@ export function useEmulator(initialSource?: string) {
       m.step();
       updateRunStateFromMachine(m);
     },
-    [scheduleFrame, updateRunStateFromMachine, pushHistory],
+    [hasPendingTick, scheduleFrame, updateRunStateFromMachine, pushHistory],
   );
 
   useEffect(() => () => stopRun(), [stopRun]);

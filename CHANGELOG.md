@@ -16,6 +16,18 @@ All notable changes to emu8086web are documented in this file.
 - The confinement logic moved from `electron/main.js` into `electron/folder-resolve.js`, because a file that imports `electron` cannot be unit-tested. `main.js` keeps thin wrappers, and `electron/folder-resolve.test.ts` covers the escape along with the normal save/create/rename paths. Reverting the guard to its previous form makes exactly those tests fail
 - **GitHub Actions script injection** — `package.json`'s version was interpolated straight into `run:` blocks via `${{ }}`, which expands before bash parses. A value like `1.5.0$(id)` would execute in a job holding `contents: write` **and** `actions: write`, and a PR that only bumps the version passes review cleanly. The version is now passed through `env:` and validated against a semver regex
 - **Desktop release ignored the lockfile** — `release-desktop.yml`, the job that produces the shipped auto-updating binary, ran plain `bun install`, so a `^` range could resolve to code that was never reviewed. Now `--frozen-lockfile`
+### Follow-up from PR review
+
+Addressed findings from the automated review; all five were valid and none were
+declined.
+
+- **The request body cap is now enforced while reading, not only from `Content-Length`** — chunked transfer encoding declares no length, so the header pre-check never fired and `req.json()` buffered the entire body first. `readJsonBody` counts bytes as they arrive and stops at the cap, so a 300 KB chunked upload with no `Content-Length` is refused with 413 instead of being parsed. Verified end to end: the same request is accepted by `req.json()`
+- **An unidentified caller no longer consumes the per-IP quota** — on a standalone deployment where no proxy sets `X-Real-IP`, every client resolved to the same key, so the first ten share links in an hour exhausted creation for the whole install. Unidentified callers now draw on a separate, higher ceiling, and the README documents the `X-Real-IP` requirement
+- **AdSense needed more than `script-src`** — display units are served as an `<iframe>` that `components/ads/adsense-unit.tsx` waits for before reporting a slot as filled. With only `script-src` allowlisted those frames fell back to `default-src 'self'`, so every ad slot would have rendered empty (with CSP console errors) whenever `NEXT_PUBLIC_ENABLE_ADS=1`. `frame-src`, `img-src` and `connect-src` are now extended conditionally as well; the ads-off build keeps the tighter default
+- **A hidden tab could start two concurrent run loops** — the resume path after console input checked only the rAF handle, but a hidden tab drives the loop off a timer, so the rAF handle is null while a tick is already queued and a second loop could be scheduled
+- The client-IP shape check now requires at least one digit, so `...` or `abc` collapse into the shared bucket instead of each minting a bucket of its own
+- README: a **Self-hosting the standalone server** section covering TLS termination and the `X-Real-IP` requirement
+
 - Smaller: shared-program responses carry `Cache-Control: no-store`; the JSON-LD block escapes `<` so a config value cannot close the script tag; share codes are rejection-sampled instead of folded with `% 36`, which biased the first four characters
 
 ### Fixed

@@ -11,11 +11,21 @@ import {
   byteLengthUtf8,
 } from "./codes";
 import {
+  UNKNOWN_BUCKET,
   checkShareCreateRateLimit,
   clientIpFromRequest,
 } from "./rate-limit";
-import { rejectCrossOrigin, rejectOversizedBody } from "./request-guards";
-import { SHARE_CODE_PATTERN } from "./constants";
+import {
+  MAX_BODY_BYTES,
+  readJsonBody,
+  rejectCrossOrigin,
+  rejectOversizedBody,
+} from "./request-guards";
+import {
+  SHARE_CODE_PATTERN,
+  SHARE_CREATE_RATE_LIMIT,
+  SHARE_CREATE_SHARED_RATE_LIMIT,
+} from "./constants";
 
 describe("generateShareCode", () => {
   it("always produces a well-formed 8-char code", () => {
@@ -170,5 +180,105 @@ describe("NextResponse interop", () => {
       new Request("https://x.test/api/share", { headers: { origin: "https://evil.test" } }),
     );
     assert.ok(res instanceof NextResponse);
+  });
+});
+
+describe("readJsonBody", () => {
+  const jsonReq = (obj: unknown, headers: Record<string, string> = {}) =>
+    new Request("https://x.test/api/share", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(obj),
+    });
+
+  it("parses a normal body", async () => {
+    const res = await readJsonBody(jsonReq({ source: "mov ax, 1", expiresInDays: 3 }));
+    assert.equal(res.ok, true);
+    assert.deepEqual(res.body, { source: "mov ax, 1", expiresInDays: 3 });
+  });
+
+  it("rejects malformed JSON with 400", async () => {
+    const req = new Request("https://x.test/api/share", {
+      method: "POST",
+      body: "{not json",
+    });
+    const res = await readJsonBody(req);
+    assert.equal(res.ok, false);
+    assert.equal(res.ok === false && res.response.status, 400);
+  });
+
+  it("rejects a body with no stream", async () => {
+    const req = new Request("https://x.test/api/share", { method: "POST" });
+    const res = await readJsonBody(req);
+    assert.equal(res.ok, false);
+    assert.equal(res.ok === false && res.response.status, 400);
+  });
+
+  it("caps the body via Content-Length before reading", async () => {
+    const res = await readJsonBody(
+      jsonReq({ s: "x" }, { "content-length": String(MAX_BODY_BYTES + 1) }),
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.ok === false && res.response.status, 413);
+  });
+
+  it("caps a chunked body with no Content-Length", async () => {
+    // The gap a Content-Length-only pre-check leaves open: chunked encoding
+    // declares no length, so the cap has to be enforced while reading.
+    const payload = JSON.stringify({ source: "x".repeat(MAX_BODY_BYTES + 1024) });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload));
+        controller.close();
+      },
+    });
+    const req = new Request("https://x.test/api/share", {
+      method: "POST",
+      body: stream,
+      // Node/undici adds a length for in-memory bodies; strip it to model
+      // genuine chunked transfer.
+      duplex: "half",
+    } as RequestInit);
+    const res = await readJsonBody(req);
+    assert.equal(res.ok, false, "an over-cap chunked body must be rejected");
+    assert.equal(res.ok === false && res.response.status, 413);
+  });
+});
+
+describe("shared-bucket fairness", () => {
+  it("gives unidentified callers a looser limit than an identified one", () => {
+    // Unique key so the shared bucket starts clean for this assertion.
+    let admitted = 0;
+    let limited: { ok: boolean; retryAfterSec?: number } | null = null;
+    for (let i = 0; i < SHARE_CREATE_SHARED_RATE_LIMIT + 5; i++) {
+      const res = checkShareCreateRateLimit(UNKNOWN_BUCKET);
+      if (res.ok) admitted++;
+      else limited = res;
+    }
+    assert.equal(
+      admitted,
+      SHARE_CREATE_SHARED_RATE_LIMIT,
+      "the shared bucket must admit its own ceiling, not the per-IP one",
+    );
+    assert.ok(limited && !limited.ok);
+    assert.ok(SHARE_CREATE_SHARED_RATE_LIMIT > SHARE_CREATE_RATE_LIMIT);
+  });
+
+  it("collapses junk client IPs into the shared bucket", () => {
+    // "..." and "abc" are shape-invalid now that a digit is required, so they
+    // cannot each mint a bucket.
+    assert.equal(
+      clientIpFromRequest(new Request("https://x.test", { headers: { "x-real-ip": "..." } })),
+      UNKNOWN_BUCKET,
+    );
+    assert.equal(
+      clientIpFromRequest(new Request("https://x.test", { headers: { "x-real-ip": "abc" } })),
+      UNKNOWN_BUCKET,
+    );
+    // A digit-bearing literal still resolves, so real clients are not merged.
+    assert.equal(
+      clientIpFromRequest(new Request("https://x.test", { headers: { "x-real-ip": "abc1" } })),
+      "abc1",
+    );
   });
 });
