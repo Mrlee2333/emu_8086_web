@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Machine } from "@/lib/emulator/machine";
+import type { Registers } from "@/lib/emulator/types";
 import { hex4 } from "@/lib/emulator";
 import { flagsToWord } from "@/lib/emulator/flags";
+import { describeRegisters, instructionNote, type RegView } from "@/lib/ide/reg-info";
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { DialogShell } from "@/components/ide/dialog-shell";
 import { IconCopy } from "@/components/ide/editor-icons";
@@ -134,38 +136,240 @@ interface RegisterPanelProps {
   machine: Machine | null;
 }
 
-export function RegisterPanel({ machine }: RegisterPanelProps) {
-  const r = machine?.reg ?? {
-    ax: 0, bx: 0, cx: 0, dx: 0, si: 0, di: 0, bp: 0, sp: 0,
-    ds: 0, es: 0, ss: 0, cs: 0,
-  };
-  const order = ["ax", "bx", "cx", "dx", "si", "di", "bp", "sp"] as const;
-  const segOrder = ["ds", "es", "ss", "cs"] as const;
-  const ipVal = machine && !machine.halted ? machine.ip : 0;
+const EMPTY_REGS: Registers = {
+  ax: 0, bx: 0, cx: 0, dx: 0, si: 0, di: 0, bp: 0, sp: 0,
+  ds: 0, es: 0, ss: 0, cs: 0,
+};
+
+/** What the strip under the grid is showing. */
+type RegDetail = { name: string; show: "info" | "value" } | null;
+
+/**
+ * One register cell: name, hex, an `i` that explains the register, and the
+ * value itself, which opens its binary and decimal reading.
+ *
+ * The panel stays hex-only by default because that is what a program is written
+ * in; the two buttons are the only way into the rest, so nothing is on screen
+ * that a beginner does not need yet.
+ */
+function RegCell({
+  view,
+  active,
+  onInfo,
+  onValue,
+  tone,
+}: {
+  view: RegView;
+  active: RegDetail;
+  onInfo: () => void;
+  onValue: () => void;
+  tone: string;
+}) {
+  const isInfo = active?.name === view.name && active.show === "info";
+  const isValue = active?.name === view.name && active.show === "value";
+  return (
+    <div className="bg-panel px-2.5 py-2">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[10px] tracking-wider text-ink-dim uppercase">
+          {view.name}
+        </span>
+        <button
+          type="button"
+          onClick={onInfo}
+          aria-pressed={isInfo}
+          title={`What ${view.name} is for`}
+          aria-label={`What ${view.name} is for`}
+          className={`font-mono text-[11px] leading-none hover:text-amber ${
+            isInfo ? "text-amber" : "text-ink-dim/60"
+          }`}
+        >
+          i
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={onValue}
+        title={`${view.name} in binary and decimal`}
+        className={`mt-0.5 block w-full text-left font-mono font-semibold hover:text-amber ${
+          tone === "gp" ? "text-base text-green" : "text-sm text-ink"
+        } ${isValue ? "text-amber" : ""}`}
+      >
+        {view.hex}
+      </button>
+    </div>
+  );
+}
+
+/** The one row under the grid: a register's purpose, or its other readings. */
+function RegStrip({ view, show, onClose }: { view: RegView; show: "info" | "value"; onClose: () => void }) {
+  return (
+    <div className="flex items-start gap-2 border-b border-line bg-panel-2/50 px-3 py-2">
+      <div className="min-w-0 flex-1 text-[11px] leading-snug">
+        <b className="font-mono text-ink">{view.name}</b>
+        {show === "info" ? (
+          <span className="text-ink-dim"> — {view.purpose}</span>
+        ) : (
+          <span className="text-ink-dim">
+            {" "}
+            · {view.dec}
+            {view.signed < 0 ? ` (${view.signed} signed)` : ""} · {view.binary}
+          </span>
+        )}
+        {show === "value" && view.high && view.low ? (
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-ink-dim">
+            <span>
+              {view.high.name} 0x{view.high.hex} ({view.high.dec}
+              {view.high.signed < 0 ? `/${view.high.signed}` : ""}
+              {view.high.printable ? ` ${view.high.printable}` : ""})
+            </span>
+            <span>
+              {view.low.name} 0x{view.low.hex} ({view.low.dec}
+              {view.low.signed < 0 ? `/${view.low.signed}` : ""}
+              {view.low.printable ? ` ${view.low.printable}` : ""})
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label={`Close ${view.name} details`}
+        title="Close"
+        className="shrink-0 font-mono text-sm leading-none text-ink-dim hover:text-amber"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The Details dialog of the CPU registers panel (v1.5.1).
+ *
+ * The table is the original emu8086 register view: a row per register, the
+ * high byte and low byte in their own columns, and a dash where a register has
+ * neither. It answers "what is in this register" at a glance, which is why the
+ * per-register descriptions live behind the `i` buttons in the panel instead.
+ */
+function RegisterDetails({ machine }: RegisterPanelProps) {
+  const views = describeRegisters(machine?.reg ?? EMPTY_REGS, machine?.ip ?? 0);
+  const curInstr =
+    machine && !machine.halted && machine.a.instrs[machine.ip]
+      ? machine.a.instrs[machine.ip]
+      : null;
+  const note = curInstr ? instructionNote(curInstr.op) : null;
 
   return (
-    <CollapsibleSection title="CPU registers" storageKey="cpu-registers">
-      <div className="grid grid-cols-4 gap-px bg-line">
-        {order.map((k) => (
-          <div key={k} className="bg-panel px-2.5 py-2">
-            <div className="text-[10px] tracking-wider text-ink-dim uppercase">{k}</div>
-            <div className="mt-0.5 font-mono text-base font-semibold text-green">{hex4(r[k])}</div>
-          </div>
-        ))}
+    <div>
+      <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,2fr)] gap-x-3 border-b border-line pb-1.5 text-[10px] tracking-wider text-ink-dim uppercase">
+        <span>Reg</span>
+        <span>H</span>
+        <span>L</span>
+        <span className="text-right">Value</span>
       </div>
-      <div className="grid grid-cols-5 gap-px border-b border-line bg-line">
-        {segOrder.map((k) => (
-          <div key={k} className="bg-panel px-2.5 py-2">
-            <div className="text-[10px] tracking-wider text-ink-dim uppercase">{k}</div>
-            <div className="mt-0.5 font-mono text-sm text-ink">{hex4(r[k])}</div>
-          </div>
-        ))}
-        <div className="bg-panel px-2.5 py-2">
-          <div className="text-[10px] tracking-wider text-ink-dim uppercase">ip</div>
-          <div className="mt-0.5 font-mono text-sm text-ink">{hex4(ipVal)}</div>
+      {views.map((v) => (
+        <div
+          key={v.name}
+          className="grid grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,2fr)] items-baseline gap-x-3 border-b border-line/50 py-1 last:border-b-0"
+        >
+          <span className="font-mono text-sm font-semibold text-ink">{v.name}</span>
+          <span className="font-mono text-sm text-green">
+            {v.high ? v.high.hex : "—"}
+          </span>
+          <span className="font-mono text-sm text-green">
+            {v.low ? v.low.hex : "—"}
+          </span>
+          <span className="text-right font-mono text-xs text-ink-dim">
+            {v.hex} · {v.dec}
+          </span>
         </div>
-      </div>
-    </CollapsibleSection>
+      ))}
+      {curInstr ? (
+        <p className="mt-3 border-t border-line pt-3 text-[11px] leading-snug text-ink-dim">
+          <b className="text-amber">
+            Next:{" "}
+            {curInstr.op.toUpperCase()}
+            {curInstr.args.length ? ` ${curInstr.args.join(", ").toUpperCase()}` : ""}
+          </b>
+          {note ? ` — ${note}.` : " — its operands name everything it touches."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function RegisterPanel({ machine }: RegisterPanelProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detail, setDetail] = useState<RegDetail>(null);
+  const views = describeRegisters(machine?.reg ?? EMPTY_REGS, machine?.ip ?? 0);
+  const byName = (n: string) => views.find((v) => v.name === n)!;
+  const gp = ["AX", "BX", "CX", "DX", "SI", "DI", "BP", "SP"] as const;
+  const seg = ["DS", "ES", "SS", "CS", "IP"] as const;
+
+  const toggle = (name: string, show: "info" | "value") =>
+    setDetail((d) => (d?.name === name && d.show === show ? null : { name, show }));
+
+  return (
+    <>
+      <CollapsibleSection
+        title="CPU registers"
+        storageKey="cpu-registers"
+        action={
+          <button
+            type="button"
+            className="text-[10px] text-ink-dim hover:text-amber"
+            onClick={() => setDetailsOpen(true)}
+            title="Every register with its high and low byte"
+          >
+            Details
+          </button>
+        }
+      >
+        <div className="grid grid-cols-4 gap-px bg-line">
+          {gp.map((name) => (
+            <RegCell
+              key={name}
+              view={byName(name)}
+              tone="gp"
+              active={detail}
+              onInfo={() => toggle(name, "info")}
+              onValue={() => toggle(name, "value")}
+            />
+          ))}
+        </div>
+        <div className="grid grid-cols-5 gap-px border-b border-line bg-line">
+          {seg.map((name) => (
+            <RegCell
+              key={name}
+              view={byName(name)}
+              tone="seg"
+              active={detail}
+              onInfo={() => toggle(name, "info")}
+              onValue={() => toggle(name, "value")}
+            />
+          ))}
+        </div>
+        {detail ? (
+          <RegStrip
+            view={byName(detail.name)}
+            show={detail.show}
+            onClose={() => setDetail(null)}
+          />
+        ) : null}
+      </CollapsibleSection>
+
+      {detailsOpen && (
+        <DialogShell
+          open={detailsOpen}
+          onClose={() => setDetailsOpen(false)}
+          title="CPU registers"
+          subtitle="Every register with the high and low byte it is made of."
+          panelClassName="max-w-md"
+        >
+          <RegisterDetails machine={machine} />
+        </DialogShell>
+      )}
+    </>
   );
 }
 

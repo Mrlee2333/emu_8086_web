@@ -8,6 +8,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.1",
+    date: "2026-09-28",
+    highlights: [
+      "Register Details: the CPU registers panel has a Details button, opening the original emu8086 register view — a row per register with the high byte and low byte in their own columns, so AH and AL, BH and BL, CH and CL, DH and DL are visible at a glance",
+      "Every register now has an i button saying what the 8086 uses it for, and clicking its value opens the same word in binary, decimal and signed, with both halves broken out",
+      "The panel stays hex-only by default: the value a program is written in is all that is on screen until a register is asked about",
+      "The Details dialog names the registers the next instruction uses without its operands saying so, so MOVSB's use of SI, DI and CX is no longer invisible",
+      "Tests: 20 new, of which the important ones check the high and low byte against the emulator's own reader after MUL, DIV, XLAT, AAM and AAD — the instructions where the two bytes mean different things and a swapped half would still pass a simpler test",
+    ],
+  },
+  {
     version: "1.5.0",
     date: "2026-09-28",
     highlights: [

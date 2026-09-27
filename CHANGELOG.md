@@ -2,6 +2,22 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.5.1] — 2026-09-28
+
+### Added
+
+- **Register Details view** — the CPU registers panel header now has a Details button that opens the original emu8086 register view: one row per register, with the high byte and low byte in their own columns. `AH`/`AL`, `BH`/`BL`, `CH`/`CL` and `DH`/`DL` are visible at a glance, and a register with no halves (SI, DI, BP, SP, the segments and IP) shows a dash rather than an invented zero
+- **A per-register `i` button** — explains what the 8086 uses that register for, without a word of it on screen until asked
+- **Click a value to see it another way** — the same word in binary, unsigned decimal and signed decimal, with both halves broken out and a printable character noted where the byte is one
+- **Implied operands are named** — the Details dialog says which registers the next instruction touches without its operands saying so, so `MOVSB`'s use of SI, DI and CX stops being invisible
+
+The panel itself is unchanged in shape and still hex-only: the value a program is written in is all that is on screen until a register is asked about.
+
+### Correctness
+
+- 20 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
+- Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
+
 ## [1.5.0] — 2026-09-28
 
 ### Fixed
