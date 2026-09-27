@@ -68,11 +68,23 @@ later two- and three-operand forms (`imul ax, bx` / `imul ax, bx, 3`).
 ### Logic / shift
 `and`, `or`, `xor`, `not`, `shl`/`sal`, `shr`, `sar`, `rol`, `ror`, `rcl`, `rcr`
 
-A count of zero leaves the operand and every flag alone. Beyond that the manual
-calls the result undefined, so a large count is reduced to one pass: a whole
-operand width, or nine steps for a rotate through carry, which turns eight bits
-plus the carry. `shl` sets overflow from the old sign bit against the bit that
-left, which is the one case where a shift is a signed operation.
+A count of zero leaves the operand and every flag alone. Past that the three
+families differ:
+
+- A **shift** keeps going: `SHL AX, 16` leaves `AX` at zero with the carry
+  holding the last bit to leave, bit 0. `SAR` fills with the sign instead, and
+  the carry ends as the sign.
+- A **rotate** comes full circle, so a count of one width leaves the value
+  where it was and still updates the carry.
+- A **rotate through carry** turns the value plus the carry, so its cycle is
+  one wider than the operand: nine steps for a byte, seventeen for a word.
+
+`shl` sets overflow from the old sign bit against the bit that left, which is
+the one case where a shift is a signed operation.
+
+The 8086 manual calls a count larger than the operand undefined. The
+behaviour above is what current hardware does, and it is what
+`lib/emulator/extended-syntax.test.ts` pins.
 
 ### Control flow
 `jmp`, `je`/`jz`, `jne`/`jnz`, `jg`/`jnle`, `jge`/`jnl`, `jl`/`jnge`, `jle`/`jng`, `ja`/`jnbe`, `jae`/`jnb`/`jnc`, `jb`/`jnae`/`jc`, `jbe`/`jna`, `js`, `jns`, `jo`, `jno`, `jp`/`jpe`, `jnp`/`jpo`, `jcxz`, `loop`, `loope`/`loopz`, `loopne`/`loopnz`, `call`, `ret`, `iret`
