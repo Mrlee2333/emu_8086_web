@@ -383,26 +383,38 @@ end main`);
 
   it("returns the same way for IRET as for RET", () => {
     // `INT` pushes nothing in this flat model, so an IRET has to read the
-    // memory stack like a RET rather than only the call-stack mirror, or the
-    // mirror and SP drift apart.
+    // memory stack the way a RET does, not only the call-stack mirror.
+    //
+    // Two details make this a real test. The interrupt is INT 10h AH=0Fh,
+    // which is answered and returns, because an IRET behind INT 21h AH=4Ch
+    // would never be reached and a test that cannot reach its own subject
+    // proves nothing. And the frame is balanced before the IRET, so the word on
+    // top of the stack really is the return address. `SP` is what
+    // discriminates: the mirror alone would return to the right instruction
+    // while leaving the return address sitting on the stack.
     const program = assemble(`.model small
 .code
 main proc
+    mov sp, 3000h
     call sub
     ret
 main endp
 sub proc
     push bp
     mov bp, sp
-    int 21h
+    mov ah, 0fh
+    int 10h
+    pop bp
     iret
 sub endp
-end main`.replace("int 21h", "mov ah, 4ch\n    int 21h"));
+end main`);
     const m = createMachine(program);
     let guard = 0;
     while (!m.halted && !m.err && guard++ < 1000) m.step();
     assert.equal(m.err, null);
     assert.equal(m.halted, true, "IRET returned to the caller and the run ended");
+    assert.equal(m.reg.sp, 0x3000, "the return address came off the memory stack");
+    assert.equal(m.callStack.length, 0, "and the mirror agrees with it");
   });
 
   it("leaves the stack alone when a call cannot be made", () => {
