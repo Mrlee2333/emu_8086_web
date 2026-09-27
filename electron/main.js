@@ -345,6 +345,13 @@ const {
   isListableFile,
   isSourceFileRel,
 } = require("./folder-guards");
+const {
+  resolveForWrite: resolveForWriteIn,
+  resolveInside: resolveInsideIn,
+  resolveSourceFile: resolveSourceFileIn,
+  resolveWritableDir: resolveWritableDirIn,
+  resolveWritableFile: resolveWritableFileIn,
+} = require("./folder-resolve");
 
 /** Main-side allowed root (set by the native folder picker only). */
 let allowedRoot = null;
@@ -399,69 +406,15 @@ function clearAllowedRoot() {
 }
 
 /**
- * Resolve `rel` inside the allowed root. Uses path.relative so the check
- * holds on case-insensitive filesystems (Windows) too, then re-resolves
- * symlinks with realpath so a linked dir/file can't escape confinement.
+ * Thin wrappers binding the allowed root. The confinement logic itself lives
+ * in `electron/folder-resolve.js` so it can be unit-tested — see
+ * `electron/folder-resolve.test.ts`.
  */
-async function resolveInside(rel) {
-  if (!allowedRoot) throw new Error("No folder open");
-  if (!isSafeRelPath(rel)) throw new Error("Invalid path");
-  const absRoot = await fs.realpath(path.resolve(allowedRoot));
-  const target = path.resolve(absRoot, rel);
-  const real = await fs.realpath(target).catch(() => target);
-  const relCheck = path.relative(absRoot, real);
-  if (relCheck === ".." || relCheck.startsWith(`..${path.sep}`) || path.isAbsolute(relCheck)) {
-    throw new Error("Path escapes the opened folder");
-  }
-  return target;
-}
-
-/**
- * Resolve a MUTATION target (write / create / rename destination).
- *
- * `resolveInside` falls back to the unresolved path when realpath fails, which
- * is exactly the dangling-symlink case: `evil.asm -> /tmp/out/pwn.asm` with a
- * missing leaf makes realpath throw ENOENT, the guard passes, and the write
- * follows the link out of the opened folder. So reject symlinked targets
- * outright and re-check the parent directory, which is the part that gets
- * created by `mkdir -p` and can itself be linked.
- */
-async function resolveForWrite(rel) {
-  const abs = await resolveInside(rel);
-  const link = await fs.lstat(abs).catch(() => null);
-  if (link?.isSymbolicLink()) {
-    throw new Error("Symbolic links are not writable targets");
-  }
-  const absRoot = await fs.realpath(path.resolve(allowedRoot));
-  const realParent = await fs
-    .realpath(path.dirname(abs))
-    .catch(() => path.dirname(abs));
-  const relCheck = path.relative(absRoot, realParent);
-  if (relCheck === ".." || relCheck.startsWith(`..${path.sep}`) || path.isAbsolute(relCheck)) {
-    throw new Error("Path escapes the opened folder");
-  }
-  return abs;
-}
-
-/** Resolve a mutable source FILE (extension + dotfile policy enforced). */
-async function resolveSourceFile(rel) {
-  if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
-  return resolveInside(rel);
-}
-
-/** Resolve a writable source FILE (symlink-safe). */
-async function resolveWritableFile(rel) {
-  if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
-  return resolveForWrite(rel);
-}
-
-/** Resolve a creatable DIRECTORY (symlink-safe). */
-async function resolveWritableDir(rel) {
-  if (!isSafeRelPath(rel) || !hasNoDotSegments(rel)) {
-    throw new Error("Invalid folder path");
-  }
-  return resolveForWrite(rel);
-}
+const resolveInside = (rel) => resolveInsideIn(allowedRoot, rel);
+const resolveForWrite = (rel) => resolveForWriteIn(allowedRoot, rel);
+const resolveSourceFile = (rel) => resolveSourceFileIn(allowedRoot, rel);
+const resolveWritableFile = (rel) => resolveWritableFileIn(allowedRoot, rel);
+const resolveWritableDir = (rel) => resolveWritableDirIn(allowedRoot, rel);
 
 async function listFolderRecursive(root) {
   const absRoot = path.resolve(root);

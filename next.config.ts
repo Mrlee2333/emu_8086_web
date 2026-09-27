@@ -39,6 +39,11 @@ const securityHeaders = [
   },
   {
     key: "Content-Security-Policy",
+    // No `upgrade-insecure-requests`: it would rewrite every asset to https://
+    // on the standalone build, which is served over plain http and is routinely
+    // reached on a LAN address. Loopback survives it only because browsers
+    // exempt potentially-trustworthy origins, which is too narrow a rescue.
+    // Forcing TLS is HSTS's job, and the hosted deployment already sends it.
     value: [
       "default-src 'self'",
       `script-src ${scriptSrc}`,
@@ -50,7 +55,6 @@ const securityHeaders = [
       "base-uri 'self'",
       "form-action 'self'",
       "frame-ancestors 'none'",
-      ...(process.env.VERCEL ? [] : ["upgrade-insecure-requests"]),
     ].join("; "),
   },
 ];
