@@ -16,10 +16,22 @@ export class DosConsole {
   private lines: string[] = [""];
   private row = 0;
   private col = 0;
+  /**
+   * Bumped on every mutation so `text` can memoize. The CRT panel reads it on
+   * each React render (~60/s while running) and joining 2,000 lines is a
+   * ~160 KB allocation each time, whether or not anything was printed.
+   */
+  private version = 0;
+  private cachedVersion = -1;
+  private cachedText = "";
 
   /** Flat text for the CRT panel / clipboard (lines joined by `\n`). */
   get text(): string {
-    return this.lines.join("\n");
+    if (this.version !== this.cachedVersion) {
+      this.cachedText = this.lines.join("\n");
+      this.cachedVersion = this.version;
+    }
+    return this.cachedText;
   }
 
   get cursorRow(): number {
@@ -40,12 +52,14 @@ export class DosConsole {
     if (this.lines.length === 0) this.lines = [""];
     this.row = Math.min(Math.max(0, state.row), this.lines.length - 1);
     this.col = Math.max(0, state.col);
+    this.version += 1;
   }
 
   clear(): void {
     this.lines = [""];
     this.row = 0;
     this.col = 0;
+    this.version += 1;
   }
 
   /** Apply a string that may contain `\r`, `\n`, `\b`, `\t`, or glyphs. */
@@ -74,12 +88,16 @@ export class DosConsole {
   }
 
   private ensureRow(r: number): void {
-    while (this.lines.length <= r) this.lines.push("");
+    if (this.lines.length <= r) {
+      while (this.lines.length <= r) this.lines.push("");
+      this.version += 1;
+    }
     // Trim oldest rows (a print loop can emit thousands of lines).
     if (this.lines.length > DosConsole.MAX_LINES) {
       const drop = this.lines.length - DosConsole.MAX_LINES;
       this.lines.splice(0, drop);
       this.row = Math.max(0, this.row - drop);
+      this.version += 1;
     }
   }
 
@@ -96,6 +114,7 @@ export class DosConsole {
     }
     this.lines[this.row] = line;
     this.col += 1;
+    this.version += 1;
   }
 
   private backspace(): void {
@@ -110,5 +129,6 @@ export class DosConsole {
       this.lines[this.row] =
         line.slice(0, this.col) + " " + line.slice(this.col + 1);
     }
+    this.version += 1;
   }
 }

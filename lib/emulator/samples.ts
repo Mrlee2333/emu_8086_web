@@ -573,5 +573,4 @@ export const SAMPLE_OPTIONS: { key: SampleKey; label: string }[] = [
 
 export const DEFAULT_SOURCE = SAMPLES.hello;
 
-export const AUTOSAVE_KEY = "emu8086web:source";
 export const THEME_KEY = "emu8086web:theme";

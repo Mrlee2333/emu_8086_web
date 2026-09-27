@@ -1,4 +1,10 @@
-import { REG8, REG8_TO_REG16, REG16 } from "./constants";
+import {
+  MAX_CALL_STACK,
+  MAX_DATA_STACK,
+  REG8,
+  REG8_TO_REG16,
+  REG16,
+} from "./constants";
 import { dosByteToPrintable } from "./cp437";
 import { DosConsole } from "./dos-console";
 import { AsmError } from "./errors";
@@ -259,6 +265,24 @@ export class Machine {
       inputQueue: [...this.inputQueue],
       waitingForInput: this.waitingForInput,
     };
+  }
+
+  /**
+   * Push onto the display mirror of the memory stack. SP and `this.mem` hold
+   * the real values; this is only what the stack panel renders, so the oldest
+   * entry is dropped past the cap rather than growing without bound.
+   */
+  private pushData(v: number): void {
+    if (this.dataStack.length >= MAX_DATA_STACK) this.dataStack.shift();
+    this.dataStack.push(v);
+  }
+
+  /** Push a return address. Overflowing halts: dropping one would break `ret`. */
+  private pushCall(ip: number, line: number): void {
+    if (this.callStack.length >= MAX_CALL_STACK) {
+      throw new AsmError("Call stack overflow (recursion too deep)", line);
+    }
+    this.callStack.push(ip);
   }
 
   /** Full reversible state for Step Back (registers + flags + memory + console). */
@@ -758,7 +782,7 @@ export class Machine {
         const v = flagsToWord(this.flags);
         this.reg.sp -= 2;
         writeUnit(this.mem, this.reg.sp, v, 2);
-        this.dataStack.push(v);
+        this.pushData(v);
         break;
       }
       case "popf": {
@@ -772,7 +796,7 @@ export class Machine {
         const v = this.readOperand(args[0]);
         this.reg.sp -= 2;
         writeUnit(this.mem, this.reg.sp, v, 2);
-        this.dataStack.push(v);
+        this.pushData(v);
         break;
       }
       case "pop": {
@@ -925,7 +949,7 @@ export class Machine {
         }
         break;
       case "call":
-        this.callStack.push(this.ip + 1);
+        this.pushCall(this.ip + 1, instr.ln);
         this.jumpTo(args[0]);
         return this.ip;
       case "ret":

@@ -5,7 +5,6 @@ export {
   SAMPLES,
   SAMPLE_OPTIONS,
   DEFAULT_SOURCE,
-  AUTOSAVE_KEY,
   THEME_KEY,
 } from "./samples";
 export type { SampleKey } from "./samples";

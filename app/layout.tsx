@@ -70,7 +70,12 @@ export default function RootLayout({
         ) : null}
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          // `JSON.stringify` leaves `<` unescaped, so a `<` inside a config
+          // value (siteUrl comes from NEXT_PUBLIC_SITE_URL) could close this
+          // script block. Escaping it keeps the JSON-LD inert.
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
+          }}
         />
       </head>
       <body className="flex min-h-full flex-col overflow-x-hidden">

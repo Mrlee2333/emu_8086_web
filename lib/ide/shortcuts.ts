@@ -245,6 +245,14 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   },
 ];
 
+/** Id lookup, so `matchShortcut` is O(1) instead of a linear scan per keypress. */
+const DEF_BY_ID = new Map(SHORTCUT_DEFS.map((d) => [d.id, d]));
+
+/** Definition for a shortcut id, or undefined when the id is unknown. */
+export function shortcutDef(id: ShortcutId): ShortcutDef | undefined {
+  return DEF_BY_ID.get(id);
+}
+
 export function detectIsMac(): boolean {
   if (typeof navigator === "undefined") return false;
   return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
@@ -348,7 +356,7 @@ export function formatShortcutLabel(
   osView: OsView,
   overrides: OverrideMap,
 ): string | null {
-  const def = SHORTCUT_DEFS.find((d) => d.id === id);
+  const def = DEF_BY_ID.get(id);
   if (!def) return null;
   const resolved = resolveOsView(osView);
   const mac = getEffectiveChord(def, scheme, "mac", overrides);
@@ -439,7 +447,7 @@ export function matchShortcut(
   scheme: ShortcutScheme,
   overrides: OverrideMap,
 ): boolean {
-  const def = SHORTCUT_DEFS.find((d) => d.id === id);
+  const def = DEF_BY_ID.get(id);
   if (!def || def.displayOnly) return false;
   const mac = getEffectiveChord(def, scheme, "mac", overrides);
   const win = getEffectiveChord(def, scheme, "windows", overrides);

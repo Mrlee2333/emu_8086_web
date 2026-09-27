@@ -29,6 +29,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Next 16.2.10 shipped 2 critical + 8 high advisories that no test
+      # catches. Fail the build on anything high or worse.
+      - name: Dependency audit
+        run: bun audit --audit-level=high
+
       - name: Lint
         run: bun run lint
 

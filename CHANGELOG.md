@@ -2,6 +2,54 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.4.2] — 2026-09-28
+
+### Security
+
+- **Dependencies: 2 critical + 8 high advisories cleared** — Next was pinned at 16.2.10, inside the advisory ranges for unauthenticated RCE on Windows-hosted servers, RCE in the Image Optimization API (reachable at `/_next/image`), a middleware/proxy bypass under Turbopack, and response-body cache confusion affecting `POST /api/share`. Upgraded to 16.3.6; `bun audit` is clean across 640 packages, and CI now runs `bun audit --audit-level=high` so this cannot regress silently
+- **Share rate limiting trusted a client-supplied header** — `clientIpFromRequest` read the first `x-forwarded-for` hop, which any caller can set. On the self-hosted standalone build that header is entirely attacker-controlled, so the only abuse control on an unauthenticated write endpoint could be bypassed with one forged request. The IP now comes from a platform-set header only (`x-vercel-forwarded-for` on Vercel, `x-real-ip` otherwise) and is shape-validated, falling back to a shared bucket. The bucket map is also swept periodically and hard-capped, so it can no longer grow for the life of the process
+- **`POST /api/share` accepted cross-origin writes** — `Request.json()` parses a body regardless of the declared content type, so a form-free `fetch` from any page is a CORS-simple request: no preflight, the row is written, the attacker just cannot read the reply. Enough to fill `shared_programs`. The endpoint now rejects `Sec-Fetch-Site: cross-site` and any foreign `Origin`, and rejects an oversized `Content-Length` *before* buffering the body
+- **Content-Security-Policy and standard security headers** — `next.config.ts` emitted only `Link` and `Content-Signal`, so the standalone/Electron server ran with no CSP, no `nosniff`, and no framing protection. Added a CSP with `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`, plus `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy` and `Permissions-Policy`. AdSense origins are allowlisted only when ads are enabled
+- **`upgrade-insecure-requests` deliberately left out of that CSP** — it emits only off Vercel, which is exactly the standalone/Electron case, and it would rewrite every asset to `https://` on a plain-HTTP self-hosted deployment. Loopback survives it only because browsers exempt potentially-trustworthy origins, so a LAN address would have served a blank page. Forcing TLS is HSTS's job, and the hosted deployment already sends it
+- **Electron: top-level navigation was unconfined** — the preload bridge exposes folder read/write/delete and is attached to the top frame regardless of origin. `will-navigate`, `will-redirect` and `will-attach-webview` now prevent off-origin navigation, window-open is pinned to the actual server port instead of any localhost port, and all permission requests are denied. IPC handlers additionally verify the calling frame's origin
+- **Electron: dangling-symlink write escape** — `resolveInside` falls back to the unresolved path when `realpath` throws, which is exactly the dangling-symlink case. A folder containing `evil.asm -> /tmp/out/pwn.asm` with a missing leaf passed the confinement check and the write followed the link out of the opened folder. Write, create and rename destinations now reject symlinked targets and re-check the parent directory — which also closes a symlinked *parent* directory that the read guard could not see
+- The confinement logic moved from `electron/main.js` into `electron/folder-resolve.js`, because a file that imports `electron` cannot be unit-tested. `main.js` keeps thin wrappers, and `electron/folder-resolve.test.ts` covers the escape along with the normal save/create/rename paths. Reverting the guard to its previous form makes exactly those tests fail
+- **GitHub Actions script injection** — `package.json`'s version was interpolated straight into `run:` blocks via `${{ }}`, which expands before bash parses. A value like `1.5.0$(id)` would execute in a job holding `contents: write` **and** `actions: write`, and a PR that only bumps the version passes review cleanly. The version is now passed through `env:` and validated against a semver regex
+- **Desktop release ignored the lockfile** — `release-desktop.yml`, the job that produces the shipped auto-updating binary, ran plain `bun install`, so a `^` range could resolve to code that was never reviewed. Now `--frozen-lockfile`
+### Follow-up from PR review
+
+Addressed findings from the automated review; all five were valid and none were
+declined.
+
+- **The request body cap is now enforced while reading, not only from `Content-Length`** — chunked transfer encoding declares no length, so the header pre-check never fired and `req.json()` buffered the entire body first. `readJsonBody` counts bytes as they arrive and stops at the cap, so a 300 KB chunked upload with no `Content-Length` is refused with 413 instead of being parsed. Verified end to end: the same request is accepted by `req.json()`
+- **An unidentified caller no longer consumes the per-IP quota** — on a standalone deployment where no proxy sets `X-Real-IP`, every client resolved to the same key, so the first ten share links in an hour exhausted creation for the whole install. Unidentified callers now draw on a separate, higher ceiling, and the README documents the `X-Real-IP` requirement
+- **AdSense needed more than `script-src`** — display units are served as an `<iframe>` that `components/ads/adsense-unit.tsx` waits for before reporting a slot as filled. With only `script-src` allowlisted those frames fell back to `default-src 'self'`, so every ad slot would have rendered empty (with CSP console errors) whenever `NEXT_PUBLIC_ENABLE_ADS=1`. `frame-src`, `img-src` and `connect-src` are now extended conditionally as well; the ads-off build keeps the tighter default
+- **A hidden tab could start two concurrent run loops** — the resume path after console input checked only the rAF handle, but a hidden tab drives the loop off a timer, so the rAF handle is null while a tick is already queued and a second loop could be scheduled
+- The client-IP shape check now requires at least one digit, so `...` or `abc` collapse into the shared bucket instead of each minting a bucket of its own
+- README: a **Self-hosting the standalone server** section covering TLS termination and the `X-Real-IP` requirement
+
+- Smaller: shared-program responses carry `Cache-Control: no-store`; the JSON-LD block escapes `<` so a config value cannot close the script tag; share codes are rejection-sampled instead of folded with `% 36`, which biased the first four characters
+
+### Fixed
+
+- **The Speed slider did nothing until Run was pressed again** — the run loop was a `setInterval(runBatch, runSpeed)`, and an interval captures its delay when it is created. Changing the speed while running updated state that the already-scheduled loop never read. The loop now reads the current speed every tick, so the slider applies live
+- **Step Back filled 32 MiB in about eight seconds of running** — the loop captured a full 64 KiB memory snapshot on every timer tick, and 512 snapshots were retained. Checkpoints during a run are now rate-limited to one per 250 ms, which preserves the "undo a Run burst" contract at a fraction of the memory
+- **Runaway `push`/`call` loops retained unbounded memory** — the shadow stacks used by the stack panels were never capped, and every snapshot copied both arrays, so a program looping `push ax` could retain hundreds of megabytes across the history. `dataStack` is now capped (oldest entries dropped, since `SP` and memory are the source of truth) and `callStack` halts with a real "recursion too deep" error rather than silently discarding a return address
+- **A backgrounded tab could leave the IDE showing "running" while frozen** — `requestAnimationFrame` is not called at all in a hidden document. The run loop falls back to a timer while hidden and resyncs its timing on return
+
+### Changed
+
+- **The run loop is driven by `requestAnimationFrame` with a time accumulator**, retiring however many instructions the elapsed time owes and rendering at most once per frame. Previously each timer callback both executed instructions and forced a full-IDE render in the same task. Note that the speed control now means what its label says — `runSpeed` milliseconds per instruction — where the old loop ran up to 200 instructions per tick regardless of the setting
+- The console panel's text is memoized behind a version counter. `machine.output` re-joined up to 2,000 console lines on every render, roughly 160 KB of string allocation per tick whether or not anything was printed
+- The workspace is no longer serialized and written to `localStorage` on every keystroke; the write is debounced and flushed on `pagehide`. The editor's syntax-highlight overlay and gutter rows are memoized, so a step no longer reconciles several thousand editor nodes. `qrcode` is dynamically imported (it is only needed by the Share dialog), and the first-load JS for `/` dropped from 743,962 B to 668,076 B
+- `AUTOSAVE_KEY` wrote the full source to `localStorage` on every edit but was never read by anything. Removed
+
+### Added
+
+- `lib/share/share.test.ts` — coverage for share-code generation, the rate limiter, the IP trust boundary and the request guards; this layer previously had none
+- `bun run bundle:budget` — Next already emits per-route first-load byte counts to `.next/diagnostics/route-bundle-stats.json` and nothing asserted on them, so a dependency or a static import could add tens of kilobytes to every visitor unnoticed. `verify` and CI now gate on it
+- Memory search counts matches and finds the next hit in a single pass. `countMatches` called `findNextMatch` once per match, so counting a common byte over the 64 KiB space cost up to ~65 million comparisons for one click
+
 ## [1.4.1] — 2026-09-26
 
 ### Fixed

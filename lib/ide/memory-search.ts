@@ -57,46 +57,50 @@ export function parseSearchPattern(raw: string): Uint8Array | null {
   return bytes;
 }
 
-/** First offset ≥ `from` where `pattern` occurs, or -1. */
-export function findNextMatch(
+/**
+ * Next match at or after `from`, plus the match count, in a single pass.
+ *
+ * Two calls became one: the status line used to run `findNextMatch` and then
+ * `countMatches`, traversing the 64 KiB space twice per click.
+ *
+ * The scan stops as soon as both answers are settled — `next` found and the
+ * count at the display cap. That matters: for a common pattern the cap is
+ * reached in the first few hundred bytes, and an unconditional full-space
+ * scan would be *slower* than the two short scans this replaces. When matches
+ * are sparse the pass is bounded by the address space and still halves the
+ * work.
+ */
+export function searchAndCount(
   mem: Uint8Array,
   pattern: Uint8Array,
-  from: number,
-): number {
-  if (pattern.length === 0 || pattern.length > mem.length) return -1;
-  let start = Math.floor(from);
-  if (!Number.isFinite(start)) start = 0;
-  start = Math.max(0, Math.min(start, mem.length - 1));
+  from = 0,
+  max = MAX_COUNTED_MATCHES,
+): { next: number; count: number } {
+  if (pattern.length === 0 || pattern.length > mem.length) {
+    return { next: -1, count: 0 };
+  }
+  const start = Math.max(0, Math.min(Math.floor(from) || 0, mem.length - 1));
   const last = mem.length - pattern.length;
   const first = pattern[0]!;
-  for (let i = start; i <= last; i++) {
+  const tail = pattern.length - 1;
+  let next = -1;
+  let count = 0;
+
+  for (let i = 0; i <= last; i++) {
     if (mem[i] !== first) continue;
     let hit = true;
-    for (let j = 1; j < pattern.length; j++) {
+    for (let j = 1; j <= tail; j++) {
       if (mem[i + j] !== pattern[j]) {
         hit = false;
         break;
       }
     }
-    if (hit) return i;
+    if (!hit) continue;
+    if (next < 0 && i >= start) next = i;
+    if (count < max) count++;
+    // Both answers settled; the rest of the space cannot change the result.
+    if (count >= max && next >= 0) break;
   }
-  return -1;
-}
 
-/** Number of (possibly overlapping) occurrences, capped for display. */
-export function countMatches(
-  mem: Uint8Array,
-  pattern: Uint8Array,
-  max = MAX_COUNTED_MATCHES,
-): number {
-  if (pattern.length === 0) return 0;
-  let n = 0;
-  let from = 0;
-  while (n < max) {
-    const hit = findNextMatch(mem, pattern, from);
-    if (hit < 0) break;
-    n++;
-    from = hit + 1;
-  }
-  return n;
+  return { next, count };
 }

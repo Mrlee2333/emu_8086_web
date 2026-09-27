@@ -6,6 +6,10 @@ import {
   type ShareTtlDays,
 } from "@/lib/share/constants";
 import {
+  readJsonBody,
+  rejectCrossOrigin,
+} from "@/lib/share/request-guards";
+import {
   checkShareCreateRateLimit,
   clientIpFromRequest,
 } from "@/lib/share/rate-limit";
@@ -31,6 +35,9 @@ export async function POST(req: Request) {
     );
   }
 
+  const forbidden = rejectCrossOrigin(req);
+  if (forbidden) return forbidden;
+
   const ip = clientIpFromRequest(req);
   const limit = checkShareCreateRateLimit(ip);
   if (!limit.ok) {
@@ -45,12 +52,11 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: CreateBody;
-  try {
-    body = (await req.json()) as CreateBody;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  // Read with a hard byte cap: `req.json()` would buffer an arbitrarily large
+  // chunked body before any check could reject it.
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as CreateBody;
 
   const source = typeof body.source === "string" ? body.source : "";
   const expiresInDays = Number(body.expiresInDays);

@@ -1,6 +1,6 @@
 {
   "name": "emu8086web",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": false,
   "description": "Modern browser-based 8086 assembler and step debugger for every platform",
   "author": "Nafis Islam Kabbo",
@@ -28,6 +28,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "bun run typecheck && next build",
+    "bundle:budget": "node scripts/check-bundle-budget.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "bun ./node_modules/typescript-7/bin/tsc --noEmit",
@@ -41,13 +42,13 @@
     "electron:publish:mac": "bun run electron:build && electron-builder --mac dmg zip --arm64 --x64 --publish always",
     "dist:mac": "bun run electron:dist:mac",
     "prepare": "husky",
-    "verify": "bun run lint && bun run typecheck && bun run test && bun run build"
+    "verify": "bun run lint && bun run typecheck && bun run test && bun run build && bun run bundle:budget"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
     "@vercel/analytics": "^2.0.1",
     "electron-updater": "^6.8.9",
-    "next": "16.2.10",
+    "next": "16.3.6",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -62,7 +63,7 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.3.6",
     "husky": "^9.1.7",
     "tailwindcss": "^4.3.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",

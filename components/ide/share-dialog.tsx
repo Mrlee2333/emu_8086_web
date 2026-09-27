@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 import { DialogShell } from "@/components/ide/dialog-shell";
 import {
   isElectronRenderer,
@@ -77,6 +76,9 @@ function ShareDialogBody({
       setResult(data);
       onToast(data.reused ? "Existing share link ready" : "Share link created");
       try {
+        // Loaded on demand: qrcode is ~14 KB gzip and only this dialog's
+        // "generate" button needs it, so it stays out of the first-load JS.
+        const { default: QRCode } = await import("qrcode");
         const url = await QRCode.toDataURL(data.url, {
           width: 192,
           margin: 2,

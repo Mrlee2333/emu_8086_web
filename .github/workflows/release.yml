@@ -5,6 +5,12 @@
 #
 # Non-version pushes are a no-op (the tag already exists → skip).
 # Manual escape hatch: `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`.
+#
+# The version comes from package.json, which any PR can edit. It is therefore
+# passed through `env:` and validated by a shell regex, never interpolated
+# directly into a `run:` block — `${{ }}` expands before bash parses, so a
+# value like `1.5.0$(id)` would otherwise execute in a job holding
+# contents:write and actions:write.
 
 name: release
 
@@ -30,15 +36,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read version
+      - name: Read and validate version
         id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          RAW="$(node -p "require('./package.json').version")"
+          if ! printf '%s' "$RAW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::package.json version is not a safe semver: $RAW"
+            exit 1
+          fi
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
 
       - name: Skip if tag already exists
         id: check
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
           git fetch --tags origin >/dev/null 2>&1 || true
-          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -46,18 +62,23 @@ jobs:
 
       - name: Create and push tag
         if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Build release notes from CHANGELOG
         if: steps.check.outputs.exists == 'false'
         id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          NOTES_FILE="$(mktemp)"
+          set -euo pipefail
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           # Extract the `## [X.Y.Z]` section (up to the next `## ` heading).
           awk -v ver="$VERSION" '
             $0 ~ "^## \\[" ver "\\]" { capture=1; next }
@@ -74,16 +95,23 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          FALLBACK: ${{ steps.notes.outputs.fallback }}
         run: |
-          TAG="v${{ steps.version.outputs.version }}"
-          if [ "${{ steps.notes.outputs.fallback }}" = "true" ]; then
+          set -euo pipefail
+          TAG="v$VERSION"
+          if [ "$FALLBACK" = "true" ]; then
             gh release create "$TAG" --title "$TAG" --generate-notes
           else
-            gh release create "$TAG" --title "$TAG" --notes-file "${{ steps.notes.outputs.file }}"
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
           fi
 
       # Tags pushed with GITHUB_TOKEN do not retrigger other workflows,
       # so the desktop installer build needs an explicit dispatch.
       - name: Dispatch desktop installer build
         if: steps.check.outputs.exists == 'false'
-        run: gh workflow run release-desktop.yml --ref "v${{ steps.version.outputs.version }}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh workflow run release-desktop.yml --ref "v$VERSION"

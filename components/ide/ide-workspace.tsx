@@ -96,7 +96,12 @@ import {
   loadOverrides,
   loadScheme,
   matchShortcut,
+  type OverrideMap,
+  type ShortcutScheme,
 } from "@/lib/ide/shortcuts";
+
+/** Quiet period before the workspace is written to localStorage. */
+const WORKSPACE_PERSIST_DEBOUNCE_MS = 400;
 
 export function IdeWorkspace() {
   const [files, setFiles] = useState<WorkspaceFile[]>(() => [createDefaultFile()]);
@@ -383,10 +388,43 @@ export function IdeWorkspace() {
     applyAccent(loadAccent(), emu.theme);
   }, [emu.theme]);
 
+  // `files` gets a fresh array identity on every keystroke, and each file can
+  // be 256 KiB. Serialising and writing the whole project synchronously on
+  // every input event blocked the main thread once per character, so the
+  // write is debounced and flushed when the page goes away.
+  const persistRef = useRef<{
+    files: WorkspaceFile[];
+    activeId: string;
+    openIds: string[];
+  } | null>(null);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPersist = useCallback(() => {
+    if (persistTimerRef.current !== null) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    const pending = persistRef.current;
+    if (!pending) return;
+    persistRef.current = null;
+    saveFilesToStorage(pending.files, pending.activeId, pending.openIds);
+  }, []);
+
   useEffect(() => {
     if (!hydrated) return;
-    saveFilesToStorage(files, activeId, openIds);
-  }, [files, activeId, openIds, hydrated]);
+    persistRef.current = { files, activeId, openIds };
+    if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(flushPersist, WORKSPACE_PERSIST_DEBOUNCE_MS);
+  }, [files, activeId, openIds, hydrated, flushPersist]);
+
+  // Losing a trailing keystroke to a tab close is the whole point of debouncing.
+  useEffect(() => {
+    window.addEventListener("pagehide", flushPersist);
+    return () => {
+      window.removeEventListener("pagehide", flushPersist);
+      flushPersist();
+    };
+  }, [flushPersist]);
 
   const persistTabSize = useCallback((size: TabSize) => {
     setTabSize(size);
@@ -1220,10 +1258,26 @@ export function IdeWorkspace() {
     ta.scrollTop = Math.max(0, (errorLine - 1) * 20 - 80);
   }, [errorLine, emu.source]);
 
+  // Shortcut prefs were re-read from localStorage on every keystroke (two
+  // synchronous reads plus a JSON.parse, per character typed). Cache them and
+  // refresh only when the shortcuts dialog signals a change.
+  const schemeRef = useRef<ShortcutScheme>(loadScheme());
+  const overridesRef = useRef<OverrideMap>(loadOverrides());
+
+  useEffect(() => {
+    const refresh = () => {
+      schemeRef.current = loadScheme();
+      overridesRef.current = loadOverrides();
+    };
+    refresh();
+    window.addEventListener("emu8086web:shortcuts-changed", refresh);
+    return () => window.removeEventListener("emu8086web:shortcuts-changed", refresh);
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const scheme = loadScheme();
-      const overrides = loadOverrides();
+      const scheme = schemeRef.current;
+      const overrides = overridesRef.current;
       const hit = (id: Parameters<typeof matchShortcut>[1]) =>
         matchShortcut(e, id, scheme, overrides);
 
