@@ -37,11 +37,24 @@ function isPackaged() {
   return app.isPackaged;
 }
 
-/** Absolute path of the bundled Next standalone server. */
+/**
+ * Absolute path of the bundled Next standalone server.
+ *
+ * `.next/standalone` is unpacked from the asar (see `asarUnpack` in
+ * package.json) so this is a real on-disk path: the server is launched with
+ * `spawn(process.execPath, [serverFile])`, and a child process cannot read a
+ * script out of an archive. Mirrors lib/electron/offline.ts
+ * resolveStandaloneServerPath (duplicated here because main stays
+ * dependency-free plain JS).
+ */
 function standaloneServerPath() {
-  // Mirrors lib/electron/offline.ts resolveStandaloneServerPath
-  // (duplicated here because main stays dependency-free plain JS).
-  return path.join(process.resourcesPath, ".next", "standalone", "server.js");
+  return path.join(
+    process.resourcesPath,
+    "app.asar.unpacked",
+    ".next",
+    "standalone",
+    "server.js",
+  );
 }
 
 /** Resolve a free loopback port, honoring PORT when usable. */
@@ -90,8 +103,21 @@ function startBundledServer() {
   return pickPort().then(
     (port) =>
       new Promise((resolve, reject) => {
+        // ELECTRON_RUN_AS_NODE is load-bearing: a packaged Electron
+        // binary ignores a script argument as an entry point and would
+        // otherwise boot a SECOND COPY OF THIS APP (its own main.js),
+        // which spawns another copy, recursively, until the machine
+        // falls over. Node mode runs server.js as a plain script.
+        // Mirrors lib/electron/offline.ts buildServerChildEnv.
+        const env = {};
+        for (const [k, v] of Object.entries(process.env)) {
+          if (typeof v === "string") env[k] = v;
+        }
+        env.PORT = String(port);
+        env.HOSTNAME = "127.0.0.1";
+        env.ELECTRON_RUN_AS_NODE = "1";
         const child = spawn(process.execPath, [serverFile], {
-          env: { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1" },
+          env,
           stdio: "ignore",
         });
         serverChild = child;
@@ -510,6 +536,21 @@ function registerFolderIpc() {
     await fs.rm(abs, { recursive: true, force: true });
   });
 }
+
+// One instance only: a second launch (double-click storm, both the
+// /Applications and dist copies opened together) focuses the running
+// window instead of booting another app + bundled server.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+app.on("second-instance", () => {
+  const win = focusedWindow();
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
 
 app.whenReady().then(() => {
   app.setName(APP_NAME);

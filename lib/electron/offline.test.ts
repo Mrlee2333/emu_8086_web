@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import {
   buildHealthUrl,
   buildLocalAppUrl,
+  buildServerChildEnv,
   DEFAULT_DEV_PORT,
   isElectronUserAgent,
   normalizeServerPort,
@@ -89,17 +90,48 @@ describe("shouldDisableShare", () => {
 });
 
 describe("resolveStandaloneServerPath", () => {
-  it("points at the bundled Next standalone server", () => {
+  it("points at the bundled Next standalone server outside the asar", () => {
     assert.equal(
       resolveStandaloneServerPath("/Applications/emu8086web.app/Contents/Resources"),
-      "/Applications/emu8086web.app/Contents/Resources/.next/standalone/server.js",
+      "/Applications/emu8086web.app/Contents/Resources/app.asar.unpacked/.next/standalone/server.js",
     );
   });
 
   it("tolerates a trailing slash", () => {
     assert.equal(
       resolveStandaloneServerPath("/tmp/resources/"),
-      "/tmp/resources/.next/standalone/server.js",
+      "/tmp/resources/app.asar.unpacked/.next/standalone/server.js",
     );
+  });
+});
+
+describe("buildServerChildEnv", () => {
+  it("forces Node mode so the child runs the script instead of a second app", () => {
+    const env = buildServerChildEnv({}, 43111);
+    assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
+    assert.equal(env.PORT, "43111");
+    assert.equal(env.HOSTNAME, "127.0.0.1");
+  });
+
+  it("inherits the parent environment and overrides the server settings", () => {
+    const env = buildServerChildEnv(
+      { PATH: "/usr/bin", PORT: "9999", HOSTNAME: "0.0.0.0" },
+      43112,
+    );
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.PORT, "43112");
+    assert.equal(env.HOSTNAME, "127.0.0.1");
+  });
+
+  it("drops undefined values that cannot survive spawn", () => {
+    const env = buildServerChildEnv({ KEPT: "yes", MISSING: undefined }, 43113);
+    assert.equal(env.KEPT, "yes");
+    assert.equal("MISSING" in env, false);
+  });
+
+  it("rejects out-of-range ports", () => {
+    assert.throws(() => buildServerChildEnv({}, 80), RangeError);
+    assert.throws(() => buildServerChildEnv({}, 70000), RangeError);
+    assert.throws(() => buildServerChildEnv({}, 1.5), RangeError);
   });
 });

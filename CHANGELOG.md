@@ -2,6 +2,30 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.4.1] — 2026-09-26
+
+### Fixed
+
+- **macOS: “emu8086web.app is damaged and can’t be opened”** — release builds shipped an unsealed bundle. CI signs with `CSC_IDENTITY_AUTO_DISCOVERY=false`, which made electron-builder skip signing entirely, so no `Contents/_CodeSignature` was written while the nested Electron binaries still expected sealed resources. macOS reported `code has no resources but signature indicates they must be present` and refused to launch
+- **macOS: infinite instance spawning that froze the machine** — the main process started the bundled server with `spawn(process.execPath, [serverFile])`. A packaged Electron binary does not take a script argument as an entry point, so each spawn booted *another copy of the app*, whose main process spawned another, recursing without bound. The server never actually ran, so no window ever opened
+- **Desktop: bundled server was unreachable** — `.next/standalone` was packed inside `app.asar`, but the main process looked for it at `Contents/Resources/.next/standalone/server.js` and launches it with `spawn`, which cannot read inside an archive. The tree is now unpacked (`asarUnpack`) and the resolver points at the real path, so the app boots its offline server
+- Opening a second copy (e.g. the `/Applications` and `dist/` builds, or a double-click storm) no longer starts another app + server: a single-instance lock focuses the running window
+
+### Added
+
+- `scripts/after-pack.mjs` seals every packaged `.app` ad-hoc when no Developer ID identity is available, and is a no-op once real signing credentials are configured
+- CI gate in `release-desktop.yml`: the release fails unless `codesign --verify --deep --strict` passes *and* the bundled server file exists on disk
+- README: install, quarantine-clearing, and in-place repair instructions
+
+### Changed
+
+- `ELECTRON_RUN_AS_NODE=1` is now set for the bundled server child (`buildServerChildEnv` in `lib/electron/offline.ts`, with `node:test` coverage), which is what makes the packaged binary execute the server as a script
+- Electron 44.4.5, @supabase/supabase-js 2.117.2
+
+### Known
+
+- Installers are still ad-hoc signed and not notarized, so a copy downloaded from GitHub Releases needs `xattr -dr com.apple.quarantine` once after install. Proper Developer ID signing + notarization is not configured in this repo.
+
 ## [1.4.0] — 2026-09-23
 
 ### Added

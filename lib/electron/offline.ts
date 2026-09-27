@@ -75,7 +75,40 @@ export function isElectronRenderer(): boolean {
   return isElectronUserAgent(navigator.userAgent);
 }
 
-/** Absolute path of the Next standalone server inside packaged resources. */
+/**
+ * Absolute path of the Next standalone server inside packaged resources.
+ *
+ * The `.next/standalone` tree is unpacked from the asar (see `asarUnpack` in
+ * package.json) because the main process launches it with `spawn`, which
+ * cannot read a script out of an archive.
+ */
 export function resolveStandaloneServerPath(resourcesPath: string): string {
-  return `${resourcesPath.replace(/\/$/, "")}/.next/standalone/server.js`;
+  const root = resourcesPath.replace(/\/$/, "");
+  return `${root}/app.asar.unpacked/.next/standalone/server.js`;
+}
+
+/**
+ * Environment for the bundled Next server child process.
+ *
+ * `ELECTRON_RUN_AS_NODE` is load-bearing. A packaged Electron binary does not
+ * accept a script argument as an entry point: spawning it with `server.js`
+ * boots a *second copy of the app*, whose main process spawns a third, and so
+ * on — an unbounded process chain that starves the machine. Node mode makes
+ * the binary execute the script as plain Node instead.
+ */
+export function buildServerChildEnv(
+  baseEnv: Record<string, string | undefined>,
+  port: number,
+): Record<string, string> {
+  if (!Number.isInteger(port) || port < MIN_PORT || port > MAX_PORT) {
+    throw new RangeError(`Invalid server port: ${String(port)}`);
+  }
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  env.PORT = String(port);
+  env.HOSTNAME = "127.0.0.1";
+  env.ELECTRON_RUN_AS_NODE = "1";
+  return env;
 }

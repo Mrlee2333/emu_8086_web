@@ -38,7 +38,7 @@ Run the `shared_programs` SQL from the 1.2.0 release notes / plan in the Supabas
 
 The same codebase ships as an offline macOS app. The packaged app starts its own bundled Next server on loopback (`127.0.0.1`), so assembling, stepping, running, and file save/open work with no internet. Short share links stay disabled while offline (they need the hosted API).
 
-Requires macOS with Xcode command-line tools (`xcode-select --install`) for code signing utilities. No paid Apple Developer account is needed for local builds; the DMG will be unsigned, so first launch needs right-click → Open.
+Requires macOS with Xcode command-line tools (`xcode-select --install`) for code signing utilities. No paid Apple Developer account is needed for local builds; the DMG is ad-hoc signed (no Developer ID), so a copy downloaded from GitHub Releases still carries the quarantine flag and needs it cleared once after install (see Troubleshooting).
 
 ### Easy command
 
@@ -62,7 +62,12 @@ bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 an
 ### Notes
 
 - Output lands in `dist/` (git-ignored): `.dmg` installer plus a `.zip` for direct distribution.
-- Unsigned builds show “unidentified developer” on first launch: right-click → Open → Open. Distributing beyond your own machines needs an Apple Developer ID + notarization (not set up in this repo).
+- Every packaged `.app` is sealed at build time (`scripts/after-pack.mjs` ad-hoc signs when no Developer ID identity is available, and the `release-desktop` workflow fails the build if `codesign --verify --deep --strict` does not pass), so a locally built app is never reported as damaged.
+- A copy downloaded from GitHub Releases is quarantined by the browser on download. After dragging it to Applications, clear the flag once, then double-click normally:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/emu8086web.app
+  ```
+  Distributing beyond your own machines without that step needs an Apple Developer ID + notarization (not set up in this repo).
 - Fonts and Vercel Analytics are inert without internet; the IDE itself is unaffected. Ads stay off unless `NEXT_PUBLIC_ENABLE_ADS=1` is set at build time (web and desktop alike).
 - The web deployment is unchanged — `output: "standalone"` in `next.config.ts` also works on Vercel.
 
@@ -73,6 +78,12 @@ bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 an
 
 ### Troubleshooting (desktop)
 
+- `“emu8086web.app” is damaged and can’t be opened`: the bundle has no valid code signature seal. This was the v1.4.0 release defect (fixed after v1.4.0: every build is now sealed and CI verifies it). Repair any affected copy without re-downloading:
+  ```bash
+  codesign --force --deep --sign - /Applications/emu8086web.app
+  xattr -dr com.apple.quarantine /Applications/emu8086web.app
+  ```
+- Multiple app copies keep spawning (fixed after v1.4.0): the old server spawn rebooted the packaged app instead of running the server script, recursing until the machine fell over. Current builds launch the server with `ELECTRON_RUN_AS_NODE=1` and enforce a single instance — a second launch just focuses the running window.
 - `sandbox_extension_issue_file … Operation not permitted`: dev-only macOS sandbox denial. `electron:dev` already passes `--no-sandbox`; packaged builds keep the sandbox on.
 - Window loads but buttons do nothing: stale dev server or blocked dev resources. Stop everything, rerun `bun run electron:dev`, and wait for “Ready” in the terminal before clicking. (`allowedDevOrigins` already covers the loopback host.)
 - For exam-day confidence, test the packaged artifact itself (`bun run dist:mac` → install the DMG), not just the dev window — dev-only issues above do not apply to it.

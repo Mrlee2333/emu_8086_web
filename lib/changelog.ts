@@ -8,6 +8,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.1",
+    date: "2026-09-26",
+    highlights: [
+      "macOS fix: the desktop app no longer reports “is damaged and can’t be opened” — every build is now code-signature sealed (ad-hoc when no Developer ID is configured)",
+      "macOS fix: the app no longer spawns infinite copies of itself and freezes — the bundled Next server is launched in Node mode instead of rebooting the app",
+      "Desktop fix: the bundled server is unpacked from the asar, so the app can actually start (it previously could not find its own server)",
+      "Single-instance lock: reopening the app focuses the running window instead of starting another app + server",
+      "CI gate: releases now fail unless codesign verification and the bundled server both pass",
+      "Dependency bumps: Electron 44.4.5, @supabase/supabase-js 2.117.2",
+    ],
+  },
+  {
     version: "1.4.0",
     date: "2026-09-23",
     highlights: [
