@@ -319,17 +319,24 @@ export class Machine {
   /**
    * Effective shift/rotate count.
    *
-   * The 8086 takes the low five bits of the count, which is 0 to 31. A count
-   * of zero leaves the operand and every flag alone. Beyond that the manual
-   * calls the result undefined, so it is reduced to one pass: a whole
-   * operand width for shifts and rotates, and nine steps for the rotates
-   * through carry, because those rotate an eight bit value plus CF.
+   * The 8086 takes the low five bits of the count, which is 0 to 31, and a
+   * count of zero leaves the operand and every flag alone. What happens past
+   * one pass differs by instruction:
+   *
+   * - A shift keeps going: shifting a word by sixteen leaves it zero, and the
+   *   carry holds the last bit to leave, which is bit 0. `SAR` fills with the
+   *   sign instead and the carry ends as the sign.
+   * - A rotate comes full circle, so a count of one width is a no-op on the
+   *   value and still updates the carry.
+   * - A rotate through carry turns a value plus the carry, so its cycle is one
+   *   wider than the operand: nine steps for a byte, seventeen for a word.
    */
-  private shiftCount(token: string, size: 1 | 2, throughCarry: boolean): number {
+  private shiftCount(token: string, size: 1 | 2, kind: "shift" | "rotate" | "rotate-carry"): number {
     const raw = this.readOperand(token) & 0x1f;
     if (raw === 0) return 0;
-    const cycle = throughCarry ? 9 : size * 8;
-    return raw % cycle;
+    const bits = size * 8;
+    if (kind === "shift") return Math.min(raw, bits);
+    return raw % (kind === "rotate-carry" ? bits + 1 : bits);
   }
 
   /**
@@ -701,7 +708,7 @@ export class Machine {
       case "shl": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, false);
+        const n = this.shiftCount(args[1], size, "shift");
         if (n === 0) break;
         const bits = size * 8;
         const mask = size === 2 ? 0xffff : 0xff;
@@ -717,7 +724,7 @@ export class Machine {
       case "sar": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, false);
+        const n = this.shiftCount(args[1], size, "shift");
         if (n === 0) break;
         const bits = size * 8;
         const signed = (a << (32 - bits)) >> (32 - bits);
@@ -730,7 +737,7 @@ export class Machine {
       case "rol": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, false);
+        const n = this.shiftCount(args[1], size, "rotate");
         if (n === 0) break;
         const bits = size * 8;
         const r = ((a << n) | (a >>> (bits - n))) & (size === 2 ? 0xffff : 0xff);
@@ -741,7 +748,7 @@ export class Machine {
       case "ror": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, false);
+        const n = this.shiftCount(args[1], size, "rotate");
         if (n === 0) break;
         const bits = size * 8;
         const r = ((a >>> n) | (a << (bits - n))) & (size === 2 ? 0xffff : 0xff);
@@ -752,7 +759,7 @@ export class Machine {
       case "rcl": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, true);
+        const n = this.shiftCount(args[1], size, "rotate-carry");
         if (n === 0) break;
         const bits = size * 8;
         let val = a;
@@ -769,7 +776,7 @@ export class Machine {
       case "rcr": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, true);
+        const n = this.shiftCount(args[1], size, "rotate-carry");
         if (n === 0) break;
         const bits = size * 8;
         let val = a;
@@ -786,7 +793,7 @@ export class Machine {
       case "shr": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.shiftCount(args[1], size, false);
+        const n = this.shiftCount(args[1], size, "shift");
         if (n === 0) break;
         const r = a >>> n;
         this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
@@ -1127,7 +1134,14 @@ export class Machine {
           return this.ip;
         }
         break;
-      case "call":
+      case "call": {
+        // The destination is settled first: a call that cannot be made must
+        // leave the stack exactly as it found it.
+        const indirect = this.isIndirectTarget(args[0]!);
+        const target = indirect
+          ? this.readOperand(args[0]!, 2)
+          : (this.a.labels[args[0]!.trim().toLowerCase()] ?? -1);
+        if (target < 0) this.jumpTo(args[0]!); // throws the usual unknown-label error
         // The return address goes on the memory stack, because that is where a
         // procedure expects to find it: [BP+2] inside a `PUSH BP / MOV BP, SP`
         // frame, and where `RET n` measures the frame from. The call stack is
@@ -1136,18 +1150,22 @@ export class Machine {
         writeUnit(this.mem, this.reg.sp, this.ip + 1, 2);
         this.pushData(this.ip + 1);
         this.pushCall(this.ip + 1, instr.ln);
-        if (this.isIndirectTarget(args[0]!)) {
-          this.ip = this.readOperand(args[0]!, 2);
-          return this.ip;
-        }
-        this.jumpTo(args[0]!);
+        this.ip = target;
         return this.ip;
-      case "ret": {
+      }
+      case "ret":
+      case "iret": {
+        // `INT` pushes nothing in this flat model, so `IRET` is the same
+        // return as `RET`. Both read the destination off the memory stack and
+        // keep the call stack as its mirror; `RET n` also drops n bytes of
+        // arguments the caller left behind.
         if (this.callStack.length === 0) {
           this.halted = true;
           return false;
         }
-        const extra = args[0] ? (parseNumber(args[0]) ?? 0) : 0;
+        const extra = args[0]
+          ? (parseNumber(args[0]) ?? this.evalConst(args[0]) ?? 0)
+          : 0;
         const target = this.mem[this.reg.sp] | (this.mem[this.reg.sp + 1] << 8);
         this.reg.sp += 2 + extra;
         if (this.dataStack.length) this.dataStack.pop();
@@ -1226,12 +1244,6 @@ export class Machine {
       case "into":
         if (this.flags.OF) throw new AsmError("INTO: overflow trap");
         break;
-      case "iret":
-        if (this.callStack.length === 0) {
-          this.halted = true;
-          return false;
-        }
-        return this.callStack.pop()!;
       default:
         throw new AsmError(`Unsupported instruction "${op.toUpperCase()}"`, instr.ln);
     }

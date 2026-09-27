@@ -102,11 +102,15 @@ function parseProduct(p: Parser): number | null {
         left = left * right;
         break;
       case "/":
-        left = right === 0 ? 0 : Math.trunc(left / right);
+        // A zero divisor is an error, not a zero: folding it to 0 would let a
+        // bad constant assemble quietly.
+        if (right === 0) return null;
+        left = Math.trunc(left / right);
         break;
       case "%":
       case "mod":
-        left = right === 0 ? 0 : left % right;
+        if (right === 0) return null;
+        left = left % right;
         break;
       case "&":
         left = left & right;
@@ -176,16 +180,17 @@ function parsePrimary(p: Parser): number | null {
 
   // A name is looked up before a number is read, because a symbol can be
   // spelled like a number: EACH is four in hex, and NOBODY is not a number at
-  // all. A name that is not defined falls through to the number reading below.
-  if (/^[A-Za-z_]/.test(rest)) {
-    const named = rest.match(/^([A-Za-z_][\w$]*)/);
-    if (named) {
-      const value = p.regs(named[1]!.toLowerCase()) ?? p.lookup(named[1]!.toLowerCase());
-      if (value !== undefined) {
-        p.pos += named[1]!.length;
-        return value;
-      }
+  // all. A name that is not defined falls through to the number reading below,
+  // and a name with parentheses is a typo rather than a call, so both end up
+  // unresolved: `FOO(5)` must not quietly become 5.
+  const named = rest.match(/^([A-Za-z_][\w$]*)/);
+  if (named) {
+    const value = p.regs(named[1]!.toLowerCase()) ?? p.lookup(named[1]!.toLowerCase());
+    if (value !== undefined) {
+      p.pos += named[1]!.length;
+      return value;
     }
+    return null;
   }
 
   const numMatch = rest.match(/^[0-9][0-9a-zA-Z_]*[bBhHdDoOqQ]?|^0x[0-9a-fA-F]+/);
@@ -196,27 +201,5 @@ function parsePrimary(p: Parser): number | null {
     return val;
   }
 
-  const nameMatch = rest.match(/^[A-Za-z_][\w$]*/);
-  if (!nameMatch) return null;
-  const name = nameMatch[0];
-  p.pos += name.length;
-  const key = name.toLowerCase();
-  const direct = p.regs(key) ?? p.lookup(key);
-  if (direct !== undefined) return direct;
-
-  skipSpace(p);
-  if (p.src[p.pos] !== "(") return null;
-  p.pos++;
-  skipSpace(p);
-  const argStart = p.pos;
-  let depth = 1;
-  while (p.pos < p.src.length && depth > 0) {
-    if (p.src[p.pos] === "(") depth++;
-    if (p.src[p.pos] === ")") depth--;
-    if (depth > 0) p.pos++;
-  }
-  if (p.src[p.pos] !== ")") return null;
-  const arg = p.src.slice(argStart, p.pos);
-  p.pos++;
-  return evalExpr(arg, p.lookup, p.here, p.regs);
+  return null;
 }

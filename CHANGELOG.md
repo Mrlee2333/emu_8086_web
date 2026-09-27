@@ -24,15 +24,29 @@ Found by running 525 programs from [Amey-Thakur/8086-ASSEMBLY-LANGUAGE-PROGRAMS]
 - **A symbol spelled like a number was read as one** — `EACH EQU 4` came out as 0xEAC, because every letter in `EACH` is a hex digit and the last is the `H` suffix. A name that is defined now wins over a number, in operands, in data values and inside expressions
 - **`#`-comments, `.FARDATA` and a `db` continued with `dw` are still rejected**; the first two are that corpus's own syntax
 
+### Review findings
+
+Nine more defects, found reviewing this work with each claim reproduced against the branch. They are here because a third-party corpus is not the only way an engine gets tested.
+
+- **`RCL` and `RCR` used the byte's cycle on a word** — a rotate through carry turns the value plus the carry, so the cycle is nine steps for a byte and seventeen for a word, and a nine-step word rotate is not a whole turn
+- **A shift of one whole width did nothing** — `SHL AX, 16` leaves the word at zero with the carry holding the last bit to leave; only a rotate comes full circle
+- **`IRET` popped only the call-stack mirror** — `INT` pushes nothing here, so an `IRET` reads the memory stack the way `RET` does, and `CALL` → `INT` → `IRET` no longer leaves the mirror and `SP` disagreeing
+- **`RET n` ignored a constant** — `RET TWO` with `TWO EQU 2` behaved as `RET` and left the caller's arguments on the stack
+- **`CALL` moved the stack before resolving its destination** — a call to a bad label no longer leaves half a frame behind for Step Back to restore
+- **The polling services ate the key they reported** — `INT 16h AH=01h` is a check, not a read, so a program that polls before reading no longer loses the first character
+- **`AH=3Bh` was treated as an open** — it is `CHDIR`; `AH=3Dh` is the open, and its access mode is bits 1 to 0 of `AL`, so `AL=10h` (compatibility sharing) opens for reading as the bits say
+- **The pixel and palette services halted the program** — `INT 10h AH=0Ch`, `0Dh` and `10h` are graphics-only and are now accepted and ignored, so a plotting program finishes and says what it plotted
+- **A constant expression could not fail** — `5 / 0` folded to zero, and an undefined name with parentheses evaluated to its argument, so a misspelt `LENGTH` looked like a number
+
 ### Added
 
 - **Constant expressions and `EQU`** — `NAME EQU value`, the older `NAME = value`, arithmetic over constants, `$ - LABEL` to measure a block, constants as `DUP` counts and inside operands, `not` / `~`, and octal. This alone accounts for 293 of the programs the first run could not assemble
 - **Code in the data segment, and data in the code segment** — a dispatch table may name code labels (`HANDLERS DW ADD_IT, SUB_IT`), and `db` / `dw` are accepted inside `.code`, which is how a COM program keeps its data beside its code
 - **Indirect `JMP` and `CALL`** — through a register or a memory word, so `JMP [HANDLERS + BX]` indexes a table
 - **`ORG`**, and a bare `SEG label` or `DATA` in the flat model
-- **An in-memory DOS file system** — `INT 21h` AH=3Bh, 3Ch, 3Dh, 3Eh, 3Fh, 40h, 41h, 42h, 4Bh and 36h, with the DOS error convention of carry set and the reason in `AX`, 8.3 names, a handle and a cursor per open, and a read-only open that refuses a write. Nothing reaches the host: the emulator has no filesystem of its own
+- **An in-memory DOS file system** — `INT 21h` AH=36h, 39h, 3Bh, 3Ch, 3Dh, 3Eh, 3Fh, 40h, 41h, 42h and 4Bh, with the DOS error convention of carry set and the reason in `AX`, 8.3 names, a handle and a cursor per open, and a read-only open that refuses a write. Handles count up from 5 and wrap into a free slot rather than growing without bound, and what runs out is open handles rather than the number of names a session has seen. Nothing reaches the host: the emulator has no filesystem of its own
 - **A port latch** — `OUT` then `IN` on the same port returns what was written, byte or word, which is what a teaching program needs to follow a transfer
-- **More BIOS services** — `INT 10h` 02h/03h cursor, 0Ch write at a position, 0Fh read the mode and cursor, 1Ah; `INT 16h` 02h/12h shift state; `INT 1Ah` tick counter; `INT 15h` 86h/88h; and `INT 03h` as a breakpoint that carries on
+- **More BIOS services** — `INT 10h` 02h/03h cursor, 0Fh read the mode and cursor, 1Ah; `INT 16h` 02h/12h shift state; `INT 1Ah` tick counter; `INT 15h` 86h/88h; and `INT 03h` as a breakpoint that carries on
 - **A conformance suite** — `lib/emulator/corpus/` holds 136 programs across 38 topics, copied from that MIT-licensed corpus, and `corpus.test.ts` runs each to completion and compares the output with the output recorded upstream. It runs in about 0.2 s inside `bun test`, and fails if a fixture has no recorded output or a topic folder is emptied
 - **`scripts/conformance-report.ts`** — measures the whole 525-program corpus, grouped by topic and by why a program failed
 - **`lib/emulator/extended-syntax.test.ts` and `lib/emulator/dos-services.test.ts`** — 39 tests that name each behaviour the corpus exercised, in small pieces

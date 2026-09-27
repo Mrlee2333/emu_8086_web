@@ -41,7 +41,10 @@ export type DosResult<T> = { ok: true; value: T } | { ok: false; code: number };
 export class DosFiles {
   /** Handles 0 to 2 are the standard devices; files start at 5. */
   private static readonly FIRST_HANDLE = 5;
+  /** Open handles at once, which is what DOS runs out of first. */
   private static readonly MAX_HANDLES = 32;
+  /** Files kept, closed or not, so memory stays bounded in a long session. */
+  private static readonly MAX_FILES = 256;
 
   private byName = new Map<string, DosFile>();
   private byHandle = new Map<number, OpenFile>();
@@ -55,7 +58,9 @@ export class DosFiles {
     if (existing && existing.openCount > 0) {
       return { ok: false, code: DOS_ERROR.accessDenied };
     }
-    if (!existing && this.byName.size >= DosFiles.MAX_HANDLES) {
+    // The limit that matters is the handles open at once. A bound on the files
+    // kept is separate, and is about memory rather than the handle table.
+    if (!existing && this.byName.size >= DosFiles.MAX_FILES) {
       return { ok: false, code: DOS_ERROR.tooManyOpenFiles };
     }
     const entry: DosFile = existing ?? { name: key, data: new Uint8Array(0), openCount: 0 };
@@ -72,12 +77,26 @@ export class DosFiles {
     return this.attach(entry, mode);
   }
 
-  /** Every open gets a handle of its own, with a cursor of its own. */
+  /**
+   * Every open gets a handle of its own, with a cursor of its own.
+   *
+   * Handles count up from 5, which is what a program expects to see early on.
+   * When the counter reaches the end of the table it wraps and takes the first
+   * handle that is free, so a program that opens and closes in a loop keeps
+   * working and never sees a handle number a real machine could not produce.
+   */
   private attach(entry: DosFile, mode: DosFileMode): DosResult<number> {
     if (this.byHandle.size >= DosFiles.MAX_HANDLES) {
       return { ok: false, code: DOS_ERROR.tooManyOpenFiles };
     }
-    const handle = this.nextHandle++;
+    let handle = this.nextHandle;
+    if (handle > DosFiles.FIRST_HANDLE + DosFiles.MAX_HANDLES - 1) {
+      handle = DosFiles.FIRST_HANDLE;
+      while (this.byHandle.has(handle)) handle += 1;
+      this.nextHandle = handle + 1;
+    } else {
+      this.nextHandle = handle + 1;
+    }
     this.byHandle.set(handle, { entry, handle, pos: 0, mode });
     entry.openCount += 1;
     return { ok: true, value: handle };
@@ -98,6 +117,29 @@ export class DosFiles {
     if (!entry) return { ok: false, code: DOS_ERROR.fileNotFound };
     if (entry.openCount > 0) return { ok: false, code: DOS_ERROR.accessDenied };
     this.byName.delete(key);
+    return { ok: true, value: true };
+  }
+
+  /**
+   * Make a directory. There is no tree here, so the name is checked the way a
+   * file name is and the directory is accepted.
+   */
+  makeDirectory(name: string): DosResult<true> {
+    if (DosFiles.normalise(name) === null) {
+      return { ok: false, code: DOS_ERROR.pathNotFound };
+    }
+    return { ok: true, value: true };
+  }
+
+  /**
+   * Change directory. Every file in this filesystem is already in the one
+   * directory that exists, so a plain 8.3 name is the current directory and
+   * anything else is a path this emulator does not have.
+   */
+  changeDirectory(name: string): DosResult<true> {
+    if (DosFiles.normalise(name) === null) {
+      return { ok: false, code: DOS_ERROR.pathNotFound };
+    }
     return { ok: true, value: true };
   }
 

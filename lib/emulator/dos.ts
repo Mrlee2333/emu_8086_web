@@ -189,12 +189,20 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
       return { handled: true };
     }
 
+    case 0x39: {
+      // Create a directory. There is one flat volume, so the name is checked
+      // and the directory is "there".
+      const made = ctx.files.makeDirectory(readDosName(ctx.mem, ctx.reg.dx & 0xffff));
+      if (!made.ok) return dosError(ctx, made.code);
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
     case 0x3b: {
-      // Open an existing file, with the access mode in BL.
-      const name = readDosName(ctx.mem, ctx.reg.dx & 0xffff);
-      const opened = ctx.files.open(name, accessMode(ctx.get8("bl")));
-      if (!opened.ok) return dosError(ctx, opened.code);
-      ctx.reg.ax = opened.value;
+      // Change directory. A program that names a directory this filesystem
+      // does not have gets the path error DOS would give.
+      const entered = ctx.files.changeDirectory(readDosName(ctx.mem, ctx.reg.dx & 0xffff));
+      if (!entered.ok) return dosError(ctx, entered.code);
       ctx.setCF(0);
       return { handled: true };
     }
@@ -316,13 +324,13 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
 }
 
 /**
- * The access mode of a file service. AH=3Bh puts the two-bit code in BL, and
- * AH=3Dh puts it in bits 4 to 5 of AL. Classroom programs also write it in the
- * low bits of AL, so both are read and the real encoding wins when it is set.
+ * The access mode of AH=3Dh, which is the low two bits of AL: 0 read, 1 write,
+ * 2 read and write. Bits 4 and 5 are the sharing mode and are ignored, so
+ * AL=10h (compatibility sharing, read only) opens for reading and not for
+ * writing, which is what the bits say.
  */
 function accessMode(code: number): "read" | "write" | "readwrite" {
-  const high = (code >> 4) & 3;
-  const bits = high !== 0 ? high : code & 3;
+  const bits = code & 3;
   if (bits === 0) return "read";
   if (bits === 1) return "write";
   return "readwrite";
@@ -383,12 +391,12 @@ function handleInt10(ctx: DosContext): DosHandlerResult {
       for (let i = 0; i < count; i++) ctx.printByte(al);
       return { handled: true };
     }
-    case 0x0c: {
-      // Write character at cursor position, leaving the cursor where it is.
-      const { row, col } = ctx.getCursor();
-      ctx.setCursor(ctx.get8("dh"), ctx.get8("dl"));
-      ctx.printByte(ctx.get8("al"));
-      ctx.setCursor(row, col);
+    case 0x0c:
+    case 0x0d: {
+      // Write a graphics pixel, in the normal and the selected pages. A text
+      // console has no pixels, so this does what the other graphics-only
+      // services do and returns: a program that plots a line should carry on
+      // and say what it plotted, not stop dead at the first pixel.
       return { handled: true };
     }
     case 0x0e:
@@ -418,14 +426,18 @@ function handleInt10(ctx: DosContext): DosHandlerResult {
       // Display combination code — text mode has none.
       ctx.set8("al", 0);
       return { handled: true };
-    case 0x10:
-      // Set/retrieve palette. Nothing to set; retrieval is refused so a
-      // program that reads knows there is no palette to read.
-      if (ctx.get8("al") === 0x01) {
-        ctx.set8("al", 0x03);
+    case 0x10: {
+      // Palette. Setting one is accepted and ignored: a text console has no
+      // palette to program, but a program that sets a border before drawing
+      // should not be stopped by the attempt. Reading one reports zero
+      // palettes, which is the truth here.
+      const al = ctx.get8("al");
+      if ((al & 0xf0) === 0x10) {
+        ctx.set8("al", 0x00);
         return { handled: true };
       }
-      return { handled: false };
+      return { handled: true };
+    }
     default:
       return { handled: false };
   }
@@ -447,9 +459,10 @@ function handleInt16(ctx: DosContext): DosHandlerResult {
     }
     case 0x01:
     case 0x11: {
-      // Check for a keystroke without waiting. AL takes the character and the
-      // zero flag says whether there was one.
-      const ch = ctx.readInputChar();
+      // Check for a keystroke without waiting, and without taking it: the
+      // character comes back in AX and is still there for the next read, so a
+      // program that polls does not lose the key it found.
+      const ch = ctx.peekInputChar();
       if (ch === null) {
         ctx.set8("al", 0);
         ctx.setZF(1);

@@ -97,6 +97,39 @@ end`);
     assert.equal(m.reg.ax, 65);
   });
 
+  it("refuses to fold a division by zero into a value", () => {
+    assert.throws(() => {
+      assemble(`.model small
+.data
+    NOPE EQU 5 / 0
+.code
+    ret
+end`);
+    }, /Cannot evaluate constant|Bad value/);
+  });
+
+  it("refuses an undefined name that looks like a function", () => {
+    // `FOO(5)` must not become 5, or a misspelt LENGTH or SIZE hides as a
+    // number and the program is wrong in a way nothing reports.
+    assert.throws(() => {
+      assemble(`.model small
+.data
+    N EQU FOO(5)
+.code
+    ret
+end`);
+    }, /Cannot evaluate constant|Bad value/);
+    assert.throws(() => {
+      assemble(`.model small
+.data
+    ARR db 1, 2, 3
+    N DW LENGHT(ARR)
+.code
+    ret
+end`);
+    }, /Cannot evaluate constant|Bad value/);
+  });
+
   it("prefers a symbol to a number when a name is spelled like one", () => {
     // EACH is four, not 0xEAC, which is what the trailing H would say.
     const m = run(`    mov cx, EACH
@@ -231,29 +264,61 @@ no_carry:`);
     assert.equal(outOf.flags.CF, 1);
   });
 
-  it("leaves the operand alone for a count of one whole width", () => {
+  it("shifts a word out to nothing at a count of one whole width", () => {
     const m = run(`    mov ax, 1234h
     mov cl, 16
-    shl ax, cl
-    rol ax, cl
-    ror ax, cl
-    shr ax, cl`);
-    assert.equal(m.reg.ax, 0x1234);
+    shl ax, cl`);
+    assert.equal(m.reg.ax, 0, "sixteen left shifts leave nothing behind");
+    assert.equal(m.flags.CF, 0, "the last bit to leave is bit 0");
   });
 
-  it("counts a rotate through carry in nine steps, as the 8086 does", () => {
+  it("fills with the sign on a right shift past the width", () => {
+    const m = run(`    mov ax, 8000h
+    mov cl, 16
+    sar ax, cl`);
+    assert.equal(m.reg.ax, 0xffff, "a negative value shifts in its own sign");
+    assert.equal(m.flags.CF, 1);
+  });
+
+  it("comes full circle for a rotate of one whole width", () => {
+    const m = run(`    mov ax, 1234h
+    mov cl, 16
+    rol ax, cl
+    ror ax, cl`);
+    assert.equal(m.reg.ax, 0x1234, "sixteen rotations land where they started");
+  });
+
+  it("counts a byte rotate through carry in nine steps", () => {
     const whole = run(`    clc
+    mov al, 81h
+    mov cl, 9
+    rcr al, cl`);
+    assert.equal(whole.reg.ax & 0xff, 0x81, "eight bits plus the carry is nine steps");
+
+    const over = run(`    clc
+    mov al, 81h
+    mov cl, 10
+    rcr al, cl`);
+    assert.equal(over.reg.ax & 0xff, 0x40, "ten steps is one step past");
+    assert.equal(over.flags.CF, 1);
+  });
+
+  it("counts a word rotate through carry in seventeen steps", () => {
+    // Sixteen bits plus the carry is seventeen, not nine: the rotate unit is
+    // as wide as the value it turns.
+    const whole = run(`    clc
+    mov ax, 8001h
+    mov cl, 17
+    rcr ax, cl`);
+    assert.equal(whole.reg.ax, 0x8001, "seventeen steps is a whole turn");
+
+    // Nine steps into a word: the value turns right nine times, and the carry
+    // that leaves the bottom on the first step comes back in at the top.
+    const nine = run(`    clc
     mov ax, 8001h
     mov cl, 9
     rcr ax, cl`);
-    assert.equal(whole.reg.ax, 0x8001, "nine steps is a whole turn");
-
-    const over = run(`    clc
-    mov ax, 8001h
-    mov cl, 10
-    rcr ax, cl`);
-    assert.equal(over.reg.ax, 0x4000, "ten steps is one step past");
-    assert.equal(over.flags.CF, 1);
+    assert.equal(nine.reg.ax, 0x0140, "nine steps is not a whole turn of a word");
   });
 });
 
@@ -286,6 +351,75 @@ end main`);
     while (!m.halted && !m.err && m.ip !== stop && guard++ < 1000) m.step();
     assert.equal(m.err, null);
     assert.equal(m.reg.ax, 19, "12 + 7 read back through the frame");
+  });
+
+  it("takes the argument count in RET from a constant", () => {
+    // `RET N` has to see through a name: dropping it would leave the caller's
+    // arguments on the stack.
+    const program = assemble(`.model small
+.data
+    TWO EQU 2
+.code
+main proc
+    mov sp, 1000h
+    mov ax, 11
+    push ax
+    mov ax, 22
+    push ax
+    call twice
+    ret
+main endp
+twice proc
+    add sp, TWO
+    ret TWO
+twice endp
+end main`);
+    const m = createMachine(program);
+    let guard = 0;
+    while (!m.halted && !m.err && guard++ < 1000) m.step();
+    assert.equal(m.err, null);
+    assert.equal(m.reg.sp, 0x1000, "the caller found its stack as it left it");
+  });
+
+  it("returns the same way for IRET as for RET", () => {
+    // `INT` pushes nothing in this flat model, so an IRET has to read the
+    // memory stack like a RET rather than only the call-stack mirror, or the
+    // mirror and SP drift apart.
+    const program = assemble(`.model small
+.code
+main proc
+    call sub
+    ret
+main endp
+sub proc
+    push bp
+    mov bp, sp
+    int 21h
+    iret
+sub endp
+end main`.replace("int 21h", "mov ah, 4ch\n    int 21h"));
+    const m = createMachine(program);
+    let guard = 0;
+    while (!m.halted && !m.err && guard++ < 1000) m.step();
+    assert.equal(m.err, null);
+    assert.equal(m.halted, true, "IRET returned to the caller and the run ended");
+  });
+
+  it("leaves the stack alone when a call cannot be made", () => {
+    // The destination is settled before the frame is pushed, so a bad target
+    // cannot leave half a call behind for Step Back to restore.
+    const program = assemble(`.model small
+.code
+main proc
+    mov sp, 2000h
+    call nowhere
+    ret
+end main`);
+    const m = createMachine(program);
+    let guard = 0;
+    while (!m.halted && !m.err && guard++ < 100) m.step();
+    assert.ok(m.err, "an unknown label is an error");
+    assert.equal(m.reg.sp, 0x2000, "SP never moved");
   });
 
   it("removes the arguments itself with RET n", () => {

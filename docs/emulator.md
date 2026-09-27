@@ -82,7 +82,14 @@ is indexed and jumped through: `jmp [handlers + bx]`.
 
 `call` pushes the return address onto the memory stack, which is where a
 `push bp` / `mov bp, sp` frame reads it at `[BP+2]`, and `ret n` removes the
-arguments the caller left behind. A `ret` with no call outstanding ends the run.
+arguments the caller left behind. The count may be a constant: `ret TWO` where
+`TWO EQU 2` works. A call whose destination cannot be resolved leaves the stack
+untouched, and a `ret` with no call outstanding ends the run.
+
+`iret` is the same return as `ret` here. `int` pushes nothing in this flat
+model, so there is no interrupt frame to unwind; an `iret` returns to whatever
+word is on top of the stack, and the call stack stays its mirror rather than
+drifting from `SP`.
 
 ### String (optional `rep` / `repe` / `repne`)
 `movsb`, `movsw`, `stosb`, `stosw`, `lodsb`, `lodsw`, `cmpsb`, `cmpsw`, `scasb`, `scasw`
@@ -110,9 +117,10 @@ arguments the caller left behind. A `ret` with no call outstanding ends the run.
 | 2Ah / 2Ch | Date / time |
 | 30h | DOS version |
 | 36h | Free disk space |
-| 3Bh | Open an existing file |
+| 39h | Create a directory (name checked; one flat volume) |
+| 3Bh | Change directory (name checked; one flat volume) |
 | 3Ch | Create a file (truncates) |
-| 3Dh | Open a file, with an access mode |
+| 3Dh | Open a file, access mode in bits 1 to 0 of AL (0 read, 1 write, 2 both) |
 | 3Eh | Close a handle |
 | 3Fh / 40h | Read / write a handle (stdin, stdout, or a file) |
 | 41h | Delete a file |
@@ -122,6 +130,10 @@ arguments the caller left behind. A `ret` with no call outstanding ends the run.
 
 Errors follow the DOS convention: carry set, and the reason in `AX`
 (2 not found, 3 bad path, 4 too many open files, 5 access denied, 6 bad handle).
+
+The sharing mode in bits 5 to 4 of AL is ignored, which leaves DOS's default:
+compatibility, so a program may hold one file open more than once. A file opened
+read-only refuses a write, with error 5.
 
 Files live in memory for the life of the machine (`lib/emulator/dos-files.ts`).
 Nothing reaches the host: the emulator has no filesystem of its own. Names are
@@ -137,10 +149,10 @@ opened read-only refuses a write.
 | 05 | Select page (one page) |
 | 06 / 07 | Scroll, and clear when AL=0 |
 | 09 / 0A | Write char |
-| 0Ch | Write char at a position, cursor unmoved |
+| 0Ch / 0Dh | Write a graphics pixel (accepted, nothing drawn: a text console has no pixels) |
 | 0Eh | Teletype |
 | 0Fh | Read mode, page size, cursor |
-| 10h | Set / read palette |
+| 10h | Set / read palette (accepted; a text console has none) |
 | 13h | Write string |
 | 1Ah | Display combination code |
 
