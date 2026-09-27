@@ -45,26 +45,12 @@ jobs:
 
       - name: Verify packaged bundles
         # An unsealed bundle (no Contents/_CodeSignature) launches as
-        # "emu8086web.app is damaged and can't be opened". The afterPack
-        # hook signs ad-hoc when CI has no Developer ID identity, so this
-        # gate is what stops a broken DMG from reaching a release.
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          APPS=(dist/mac*/emu8086web.app)
-          if [ ${#APPS[@]} -eq 0 ]; then
-            echo "No packaged .app bundles found in dist/" >&2
-            exit 1
-          fi
-          for app in "${APPS[@]}"; do
-            echo "::group::verify $app"
-            codesign --verify --deep --strict --verbose=2 "$app"
-            # The bundled Next server must exist outside the asar: the main
-            # process spawns it, and a child cannot read inside an archive.
-            test -f "$app/Contents/Resources/app.asar.unpacked/.next/standalone/server.js"
-            echo "::endgroup::"
-            echo "ok: $app"
-          done
+        # "emu8086web.app is damaged and can't be opened", and a bundled
+        # server stuck inside app.asar cannot be spawned. The afterPack
+        # hook seals ad-hoc when CI has no Developer ID identity; this gate
+        # is what stops a broken DMG from reaching a release. Same script
+        # `bun run verify:mac-bundle` runs locally, so they cannot drift.
+        run: bun run verify:mac-bundle
 
       - name: Create the GitHub Release if missing
         run: |

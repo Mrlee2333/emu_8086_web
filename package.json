@@ -36,6 +36,8 @@
     "electron:build": "bun run build && node scripts/prepare-electron.mjs",
     "electron:dist:mac": "bun run electron:build && electron-builder --mac dmg --publish never",
     "electron:dist:mac-all": "bun run electron:build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "electron:dist:mac:ci-sim": "bun run electron:build && node scripts/dist-mac-ci-sim.mjs",
+    "verify:mac-bundle": "node scripts/verify-mac-bundle.mjs",
     "electron:publish:mac": "bun run electron:build && electron-builder --mac dmg zip --arm64 --x64 --publish always",
     "dist:mac": "bun run electron:dist:mac",
     "prepare": "husky",

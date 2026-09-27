@@ -38,7 +38,50 @@ Run the `shared_programs` SQL from the 1.2.0 release notes / plan in the Supabas
 
 The same codebase ships as an offline macOS app. The packaged app starts its own bundled Next server on loopback (`127.0.0.1`), so assembling, stepping, running, and file save/open work with no internet. Short share links stay disabled while offline (they need the hosted API).
 
-Requires macOS with Xcode command-line tools (`xcode-select --install`) for code signing utilities. No paid Apple Developer account is needed for local builds; the DMG is ad-hoc signed (no Developer ID), so a copy downloaded from GitHub Releases still carries the quarantine flag and needs it cleared once after install (see Troubleshooting).
+Requires macOS with Xcode command-line tools (`xcode-select --install`) for code signing utilities. No paid Apple Developer account is needed for local builds; the DMG is ad-hoc signed (no Developer ID), so a copy downloaded from GitHub Releases still carries the quarantine flag and needs it cleared once after install.
+
+### Verifying a downloaded DMG
+
+Releases are **ad-hoc signed and not notarized**, so macOS blocks a freshly downloaded copy until you clear the quarantine flag. Do these steps once per download. (v1.4.0 shipped broken and could not be opened at all — steps 5 and 6 are what catch that class of defect.)
+
+```bash
+# 1. Confirm the download matches what GitHub published.
+#    GitHub shows a sha256 digest on the asset page; compare:
+shasum -a 256 ~/Downloads/emu8086web-1.4.1-arm64.dmg
+
+# 2. Mount the DMG and drag emu8086web.app into Applications.
+hdiutil attach ~/Downloads/emu8086web-1.4.1-arm64.dmg
+#    (drag in Finder, then eject)
+
+# 3. Clear the quarantine flag. Required exactly once after any download.
+xattr -dr com.apple.quarantine /Applications/emu8086web.app
+
+# 4. Launch. The IDE window should open within a few seconds.
+open /Applications/emu8086web.app
+```
+
+Then confirm the install is actually good:
+
+```bash
+# 5. The signature seal must verify (silence = healthy).
+codesign --verify --deep --strict /Applications/emu8086web.app && echo "signature OK"
+
+# 6. The bundled offline server must exist as a real file.
+ls /Applications/emu8086web.app/Contents/Resources/app.asar.unpacked/.next/standalone/server.js
+
+# 7. It must not be spawning copies of itself. Expect a small, steady number
+#    (1 app + 1 next-server + 3 Chromium helpers = 5), not a climbing number.
+pgrep -f emu8086web | wc -l
+```
+
+If step 5 fails, the bundle is unsealed. Repair it in place without re-downloading:
+
+```bash
+codesign --force --deep --sign - /Applications/emu8086web.app
+xattr -dr com.apple.quarantine /Applications/emu8086web.app
+```
+
+To reproduce the exact CI artifact locally — the no-certificate path that produced the v1.4.0 defect — build with `bun run electron:dist:mac:ci-sim`. It skips certificate discovery and then runs the same verification gate CI runs, so you test what users actually download instead of a differently-signed local build.
 
 ### Easy command
 
@@ -57,17 +100,19 @@ bun run electron:dev        # live desktop window against `next dev` (developmen
 bun run electron:build      # web production build + stage the standalone server
 bun run electron:dist:mac   # package the DMG for this Mac (calls electron:build first)
 bun run electron:dist:mac-all  # DMGs (+ zips for auto-update) for both arm64 and x64
+bun run electron:dist:mac:ci-sim  # rebuild with no certificate (matches CI) + verify
+bun run verify:mac-bundle   # check the seal + bundled server in dist/
 ```
 
 ### Notes
 
 - Output lands in `dist/` (git-ignored): `.dmg` installer plus a `.zip` for direct distribution.
-- Every packaged `.app` is sealed at build time (`scripts/after-pack.mjs` ad-hoc signs when no Developer ID identity is available, and the `release-desktop` workflow fails the build if `codesign --verify --deep --strict` does not pass), so a locally built app is never reported as damaged.
+- Every packaged `.app` is sealed at build time (`scripts/after-pack.mjs` ad-hoc signs when no Developer ID identity is available, and `bun run verify:mac-bundle` fails if `codesign --verify --deep --strict` does not pass or the bundled server is missing), so a locally built app is never reported as damaged.
 - A copy downloaded from GitHub Releases is quarantined by the browser on download. After dragging it to Applications, clear the flag once, then double-click normally:
   ```bash
   xattr -dr com.apple.quarantine /Applications/emu8086web.app
   ```
-  Distributing beyond your own machines without that step needs an Apple Developer ID + notarization (not set up in this repo).
+  Distributing beyond your own machines without that step needs an Apple Developer ID + notarization (not set up in this repo). See [Verifying a downloaded DMG](#verifying-a-downloaded-dmg).
 - Fonts and Vercel Analytics are inert without internet; the IDE itself is unaffected. Ads stay off unless `NEXT_PUBLIC_ENABLE_ADS=1` is set at build time (web and desktop alike).
 - The web deployment is unchanged — `output: "standalone"` in `next.config.ts` also works on Vercel.
 

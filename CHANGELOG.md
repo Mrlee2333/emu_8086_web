@@ -14,17 +14,24 @@ All notable changes to emu8086web are documented in this file.
 ### Added
 
 - `scripts/after-pack.mjs` seals every packaged `.app` ad-hoc when no Developer ID identity is available, and is a no-op once real signing credentials are configured
-- CI gate in `release-desktop.yml`: the release fails unless `codesign --verify --deep --strict` passes *and* the bundled server file exists on disk
-- README: install, quarantine-clearing, and in-place repair instructions
+- `bun run verify:mac-bundle` — the release gate as a local command: fails unless `codesign --verify --deep --strict` passes, the `CodeResources` seal exists, and the bundled server is present on disk. `release-desktop.yml` runs this exact script, so the two cannot drift
+- `bun run electron:dist:mac:ci-sim` — rebuilds with certificate discovery disabled (the CI path that produced the v1.4.0 defect) and then verifies it, so the artifact you test locally matches the one users download
+- README: a **Verifying a downloaded DMG** section with numbered install, quarantine-clearing, and post-install health-check steps
 
 ### Changed
 
 - `ELECTRON_RUN_AS_NODE=1` is now set for the bundled server child (`buildServerChildEnv` in `lib/electron/offline.ts`, with `node:test` coverage), which is what makes the packaged binary execute the server as a script
 - Electron 44.4.5, @supabase/supabase-js 2.117.2
 
-### Known
+### Known — required after download
 
-- Installers are still ad-hoc signed and not notarized, so a copy downloaded from GitHub Releases needs `xattr -dr com.apple.quarantine` once after install. Proper Developer ID signing + notarization is not configured in this repo.
+Installers are ad-hoc signed and **not notarized**, so macOS blocks a freshly downloaded copy. After dragging the app to Applications, run this once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/emu8086web.app
+```
+
+Then launch normally. The fix above resolves the *seal* defect that made v1.4.0 unlaunchable; this step resolves the separate quarantine block, which only Developer ID signing + notarization can remove permanently. Full steps, including post-install health checks (`codesign --verify`, bundled-server presence, process-count check), are in the README under **Verifying a downloaded DMG**.
 
 ## [1.4.0] — 2026-09-23
 
