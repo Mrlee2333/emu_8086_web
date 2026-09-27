@@ -2,6 +2,43 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.5.0] — 2026-09-28
+
+### Fixed
+
+Found by running 525 programs from [Amey-Thakur/8086-ASSEMBLY-LANGUAGE-PROGRAMS](https://github.com/Amey-Thakur/8086-ASSEMBLY-LANGUAGE-PROGRAMS) and comparing the console output against the output that repository recorded. Matching programs went from 133 to 461.
+
+- **`CALL` did not push the return address** — the return lived only in an internal list, so a `PUSH BP` / `MOV BP, SP` frame read the caller's argument where the return address should be. Every program that passed arguments on the stack, measured its stack, or recursed computed the wrong answer: 7 factorial came out as 1. `CALL` now writes the return address to the memory stack and `RET` reads it back, so `[BP+4]` is the first argument, and `RET n` removes the arguments the caller left. Recursion went from 0 of 12 corpus programs to 12 of 12
+- **Shift and rotate lost the carry** — `SHL`, `SHR` and `SAR` set `CF` and then called the flag helper that clears it, so the bit that left was always zero. A multiword `RCR` shift halved nothing, and any program that saved a carry with `PUSHF` read back zero
+- **`SHL` never set overflow** — it is the one shift that is a signed operation, and the flag was left as the addition had it
+- **A shift count of a whole operand width moved bits** — `SHL AX, 16` and `ROL AX, 8` now reduce to one pass, and `RCL` / `RCR` count in nine steps, because they turn eight bits plus the carry
+- **`IMUL` multiplied 16-bit values for a byte operand**, so signed byte arithmetic came out unsigned, and the two- and three-operand forms did not exist
+- **`LAHF` loaded the flags into `AL`** instead of `AH`, and `PUSHF` left bits 12 to 15 clear, which the 8086 reads as one
+- **`DAA` and `DAS` cleared the carry they had just produced**, so packed BCD addition lost the carry into the next byte
+- **A negative displacement in brackets was ignored** — `[DI-2]` read `[DI]`, which broke insertion sort, gnome sort and a dozen other programs
+- **A bare label with a displacement was not an operand** — `SEEN+2` and `WORD PTR COUNT` were rejected
+- **The polling services never set the zero flag** — `INT 21h AH=06h` and `INT 16h AH=01h` say "nothing waiting" with `ZF`, and without it a program cannot tell an empty queue from a full one
+- **`LEA` of a label plus a constant was rejected** — `LEA SI, BUFFER + 2` addresses a label and an offset, which is a value
+- **Octal numbers and `NOT` in an operand were not read** — `101Q` and `AND AL, NOT 00000100B`
+- **`NOT` matched the first three letters of any name** — a constant called `NOTHING` was read as `NOT HING` and evaluated to nothing, and the DUP fill silently became zero
+- **A symbol spelled like a number was read as one** — `EACH EQU 4` came out as 0xEAC, because every letter in `EACH` is a hex digit and the last is the `H` suffix. A name that is defined now wins over a number, in operands, in data values and inside expressions
+- **`#`-comments, `.FARDATA` and a `db` continued with `dw` are still rejected**; the first two are that corpus's own syntax
+
+### Added
+
+- **Constant expressions and `EQU`** — `NAME EQU value`, the older `NAME = value`, arithmetic over constants, `$ - LABEL` to measure a block, constants as `DUP` counts and inside operands, `not` / `~`, and octal. This alone accounts for 293 of the programs the first run could not assemble
+- **Code in the data segment, and data in the code segment** — a dispatch table may name code labels (`HANDLERS DW ADD_IT, SUB_IT`), and `db` / `dw` are accepted inside `.code`, which is how a COM program keeps its data beside its code
+- **Indirect `JMP` and `CALL`** — through a register or a memory word, so `JMP [HANDLERS + BX]` indexes a table
+- **`ORG`**, and a bare `SEG label` or `DATA` in the flat model
+- **An in-memory DOS file system** — `INT 21h` AH=3Bh, 3Ch, 3Dh, 3Eh, 3Fh, 40h, 41h, 42h, 4Bh and 36h, with the DOS error convention of carry set and the reason in `AX`, 8.3 names, a handle and a cursor per open, and a read-only open that refuses a write. Nothing reaches the host: the emulator has no filesystem of its own
+- **A port latch** — `OUT` then `IN` on the same port returns what was written, byte or word, which is what a teaching program needs to follow a transfer
+- **More BIOS services** — `INT 10h` 02h/03h cursor, 0Ch write at a position, 0Fh read the mode and cursor, 1Ah; `INT 16h` 02h/12h shift state; `INT 1Ah` tick counter; `INT 15h` 86h/88h; and `INT 03h` as a breakpoint that carries on
+- **A conformance suite** — `lib/emulator/corpus/` holds 136 programs across 38 topics, copied from that MIT-licensed corpus, and `corpus.test.ts` runs each to completion and compares the output with the output recorded upstream. It runs in about 0.2 s inside `bun test`, and fails if a fixture has no recorded output or a topic folder is emptied
+- **`scripts/conformance-report.ts`** — measures the whole 525-program corpus, grouped by topic and by why a program failed
+- **`lib/emulator/extended-syntax.test.ts` and `lib/emulator/dos-services.test.ts`** — 39 tests that name each behaviour the corpus exercised, in small pieces
+- **`scripts/corpus-fixtures.ts`** — refreshes the fixtures and their expected output from a checkout of the corpus
+- `docs/corpus-coverage.md` — the measured result, the differences that cannot be fixed, and the defects the run found
+
 ## [1.4.2] — 2026-09-28
 
 ### Security

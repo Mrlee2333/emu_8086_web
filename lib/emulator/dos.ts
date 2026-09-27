@@ -1,3 +1,4 @@
+import { readDosName } from "./dos-files";
 import type { DosContext, DosHandlerResult } from "./types";
 
 /**
@@ -11,7 +12,13 @@ export function handleInterrupt(
   if (vector === 0x21) return handleInt21(ctx);
   if (vector === 0x10) return handleInt10(ctx);
   if (vector === 0x16) return handleInt16(ctx);
+  if (vector === 0x1a) return handleInt1a(ctx);
+  if (vector === 0x15) return handleInt15(ctx);
   if (vector === 0x20) return { handled: true, halt: true };
+  // INT 3 is the software breakpoint. A machine with no debugger under it
+  // simply carries on from the next instruction, which is what a program that
+  // leaves one in expects.
+  if (vector === 0x03) return { handled: true };
   return { handled: false };
 }
 
@@ -55,12 +62,16 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
     case 0x06: {
       const dl = ctx.get8("dl");
       if (dl === 0xff) {
+        // The only DOS service that asks without waiting. It says so with the
+        // zero flag, which is what lets a program poll and carry on.
         const ch = ctx.readInputChar();
         if (ch === null) {
           ctx.set8("al", 0);
+          ctx.setZF(1);
           return { handled: true };
         }
         ctx.set8("al", ch.charCodeAt(0) & 0xff);
+        ctx.setZF(0);
         return { handled: true };
       }
       ctx.printByte(dl);
@@ -169,47 +180,131 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
       return { handled: true };
     }
 
+    case 0x36: {
+      // Free disk space: 64 KiB units per drive, one drive.
+      ctx.reg.ax = 0x0080;
+      ctx.reg.bx = 0;
+      ctx.reg.cx = 0x2680;
+      ctx.reg.dx = 0;
+      return { handled: true };
+    }
+
+    case 0x3b: {
+      // Open an existing file, with the access mode in BL.
+      const name = readDosName(ctx.mem, ctx.reg.dx & 0xffff);
+      const opened = ctx.files.open(name, accessMode(ctx.get8("bl")));
+      if (!opened.ok) return dosError(ctx, opened.code);
+      ctx.reg.ax = opened.value;
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
+    case 0x3c: {
+      // Create a file, truncating it if it is there and not open.
+      const name = readDosName(ctx.mem, ctx.reg.dx & 0xffff);
+      const made = ctx.files.create(name);
+      if (!made.ok) return dosError(ctx, made.code);
+      ctx.reg.ax = made.value;
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
+    case 0x3d: {
+      // Open a file, with the access mode in bits 4 to 6 of AL.
+      const name = readDosName(ctx.mem, ctx.reg.dx & 0xffff);
+      const opened = ctx.files.open(name, accessMode(ctx.get8("al")));
+      if (!opened.ok) return dosError(ctx, opened.code);
+      ctx.reg.ax = opened.value;
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
+    case 0x3e: {
+      const closed = ctx.files.close(ctx.reg.bx);
+      if (!closed.ok) return dosError(ctx, closed.code);
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
     case 0x3f: {
-      // Read from handle (stdin = 0)
+      // Read from a handle: the keyboard, or a file.
       const handle = ctx.reg.bx;
       const count = ctx.reg.cx;
       const start = ctx.reg.dx & 0xffff;
-      if (handle !== 0) {
-        ctx.reg.ax = 0;
+      if (handle === 0) {
+        let read = 0;
+        let addr = start;
+        while (read < count) {
+          const ch = ctx.readInputChar();
+          if (ch === null) {
+            if (read === 0) {
+              ctx.waitingForInput = true;
+              return { handled: true, waitForInput: true };
+            }
+            break;
+          }
+          ctx.mem[addr] = ch.charCodeAt(0) & 0xff;
+          addr = (addr + 1) & 0xffff;
+          read++;
+          if (ch === "\r" || ch === "\n") break;
+        }
+        ctx.reg.ax = read;
+        ctx.setCF(0);
         return { handled: true };
       }
-      let read = 0;
-      let addr = start;
-      while (read < count) {
-        const ch = ctx.readInputChar();
-        if (ch === null) {
-          if (read === 0) {
-            ctx.waitingForInput = true;
-            return { handled: true, waitForInput: true };
-          }
-          break;
-        }
-        ctx.mem[addr] = ch.charCodeAt(0) & 0xff;
-        addr = (addr + 1) & 0xffff;
-        read++;
-        if (ch === "\r" || ch === "\n") break;
+      const buf = new Uint8Array(count);
+      const read = ctx.files.read(handle, buf, count);
+      if (!read.ok) return dosError(ctx, read.code);
+      for (let i = 0; i < read.value; i++) {
+        ctx.mem[(start + i) & 0xffff] = buf[i]!;
       }
-      ctx.reg.ax = read;
+      ctx.reg.ax = read.value;
+      ctx.setCF(0);
       return { handled: true };
     }
 
     case 0x40: {
-      // Write to handle (stdout/stderr)
+      // Write to a handle: the screen, or a file.
       const handle = ctx.reg.bx;
       const count = ctx.reg.cx;
       const addr = ctx.reg.dx & 0xffff;
-      if (handle !== 1 && handle !== 2) {
-        ctx.reg.ax = 0;
+      if (handle === 1 || handle === 2) {
+        printMemBytes(ctx, addr, count);
+        ctx.reg.ax = count;
+        ctx.setCF(0);
         return { handled: true };
       }
-      printMemBytes(ctx, addr, count);
-      ctx.reg.ax = count;
+      const buf = new Uint8Array(count);
+      for (let i = 0; i < count; i++) buf[i] = ctx.mem[(addr + i) & 0xffff]!;
+      const written = ctx.files.write(handle, buf);
+      if (!written.ok) return dosError(ctx, written.code);
+      ctx.reg.ax = written.value;
+      ctx.setCF(0);
       return { handled: true };
+    }
+
+    case 0x41: {
+      const removed = ctx.files.remove(readDosName(ctx.mem, ctx.reg.dx & 0xffff));
+      if (!removed.ok) return dosError(ctx, removed.code);
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
+    case 0x42: {
+      // Seek: AL is the origin, CX:DX the offset.
+      const method = (ctx.get8("al") & 3) as 0 | 1 | 2;
+      const offset = (ctx.reg.cx << 16) | ctx.reg.dx;
+      const pos = ctx.files.seek(ctx.reg.bx, method, signed32(offset));
+      if (pos === null) return dosError(ctx, 6);
+      ctx.reg.ax = pos & 0xffff;
+      ctx.reg.dx = (pos >>> 16) & 0xffff;
+      ctx.setCF(0);
+      return { handled: true };
+    }
+
+    case 0x4b: {
+      // Exit with a return code (AL).
+      return { handled: true, halt: true };
     }
 
     case 0x4c:
@@ -220,21 +315,67 @@ function handleInt21(ctx: DosContext): DosHandlerResult {
   }
 }
 
+/**
+ * The access mode of a file service. AH=3Bh puts the two-bit code in BL, and
+ * AH=3Dh puts it in bits 4 to 5 of AL. Classroom programs also write it in the
+ * low bits of AL, so both are read and the real encoding wins when it is set.
+ */
+function accessMode(code: number): "read" | "write" | "readwrite" {
+  const high = (code >> 4) & 3;
+  const bits = high !== 0 ? high : code & 3;
+  if (bits === 0) return "read";
+  if (bits === 1) return "write";
+  return "readwrite";
+}
+
+/** Report a DOS error the way the manual says: carry set, code in AX. */
+function dosError(ctx: DosContext, code: number): DosHandlerResult {
+  ctx.reg.ax = code;
+  ctx.setCF(1);
+  return { handled: true };
+}
+
+function signed32(v: number): number {
+  return v > 0x7fffffff ? v - 0x100000000 : v;
+}
+
 function handleInt10(ctx: DosContext): DosHandlerResult {
   const ah = ctx.get8("ah");
   switch (ah) {
     case 0x00:
-      // Set video mode — text modes only (no-op for console)
+      // Set video mode. A mode with bit 7 clear is text; the console panel
+      // only draws text, so a graphics mode is remembered but not rendered.
+      ctx.setVideoMode(ctx.get8("al") & 0x7f);
+      ctx.clearScreen();
       return { handled: true };
     case 0x02:
+      // Set cursor position: DH row, DL column.
+      ctx.setCursor(ctx.get8("dh"), ctx.get8("dl"));
+      return { handled: true };
     case 0x03:
-      // Cursor set/get — stub
+      // Read cursor position and shape.
+      {
+        const { row, col } = ctx.getCursor();
+        ctx.set8("dh", row);
+        ctx.set8("dl", col);
+        ctx.set8("ch", 0x06);
+        ctx.set8("cl", 0x07);
+      }
+      return { handled: true };
+    case 0x05:
+      // Select active page — the console has one page.
       return { handled: true };
     case 0x06:
-    case 0x07:
-      // Scroll — clear console on full scroll
-      if (ctx.get8("al") === 0) ctx.print("\n");
+    case 0x07: {
+      // Scroll window up. AL=0 clears the window, which for a full-screen
+      // scroll is a clear screen; a partial scroll is not drawn.
+      if (ctx.get8("al") === 0) {
+        const keepCursor = ctx.get8("ch") === 0 && ctx.get8("cl") === 0;
+        ctx.clearScreen();
+        if (keepCursor) ctx.setCursor(0, 0);
+      }
       return { handled: true };
+    }
     case 0x09:
     case 0x0a: {
       const al = ctx.get8("al");
@@ -242,8 +383,28 @@ function handleInt10(ctx: DosContext): DosHandlerResult {
       for (let i = 0; i < count; i++) ctx.printByte(al);
       return { handled: true };
     }
-    case 0x0e: {
+    case 0x0c: {
+      // Write character at cursor position, leaving the cursor where it is.
+      const { row, col } = ctx.getCursor();
+      ctx.setCursor(ctx.get8("dh"), ctx.get8("dl"));
       ctx.printByte(ctx.get8("al"));
+      ctx.setCursor(row, col);
+      return { handled: true };
+    }
+    case 0x0e:
+      ctx.printByte(ctx.get8("al"));
+      return { handled: true };
+    case 0x0f: {
+      // Read video state: AL mode, AH 80 columns, BH page 0, CX/DX cursor.
+      ctx.set8("al", ctx.getVideoMode());
+      ctx.set8("ah", 80);
+      ctx.set8("bh", 0);
+      ctx.set8("bl", 0);
+      const { row, col } = ctx.getCursor();
+      ctx.set8("ch", row);
+      ctx.set8("cl", col);
+      ctx.set8("dh", row);
+      ctx.set8("dl", col);
       return { handled: true };
     }
     case 0x13: {
@@ -253,6 +414,18 @@ function handleInt10(ctx: DosContext): DosHandlerResult {
       printMemBytes(ctx, addr, len);
       return { handled: true };
     }
+    case 0x1a:
+      // Display combination code — text mode has none.
+      ctx.set8("al", 0);
+      return { handled: true };
+    case 0x10:
+      // Set/retrieve palette. Nothing to set; retrieval is refused so a
+      // program that reads knows there is no palette to read.
+      if (ctx.get8("al") === 0x01) {
+        ctx.set8("al", 0x03);
+        return { handled: true };
+      }
+      return { handled: false };
     default:
       return { handled: false };
   }
@@ -274,17 +447,62 @@ function handleInt16(ctx: DosContext): DosHandlerResult {
     }
     case 0x01:
     case 0x11: {
-      // Check keystroke — ZF set if none (approximate via AL)
+      // Check for a keystroke without waiting. AL takes the character and the
+      // zero flag says whether there was one.
       const ch = ctx.readInputChar();
       if (ch === null) {
         ctx.set8("al", 0);
+        ctx.setZF(1);
       } else {
         ctx.set8("al", ch.charCodeAt(0) & 0xff);
         ctx.set8("ah", 0);
+        ctx.setZF(0);
       }
       return { handled: true };
     }
+    case 0x02:
+    case 0x12:
+      // Shift key state: no key is held in a program that reads it this way,
+      // so every bit is clear.
+      ctx.set8("al", 0);
+      return { handled: true };
     default:
       return { handled: false };
   }
+}
+
+/** INT 1Ah: the BIOS tick counter and the midnight flag. */
+function handleInt1a(ctx: DosContext): DosHandlerResult {
+  const ah = ctx.get8("ah");
+  if (ah === 0x00) {
+    // Read the tick counter. Nothing advances it here, so it reads zero and
+    // the midnight rollover flag stays clear.
+    ctx.reg.cx = 0;
+    ctx.reg.dx = 0;
+    ctx.set8("al", 0);
+    return { handled: true };
+  }
+  if (ah === 0x01) {
+    // Set the tick counter.
+    ctx.set8("al", 0);
+    return { handled: true };
+  }
+  return { handled: false };
+}
+
+/** The handful of INT 15h services that classroom programs reach for. */
+function handleInt15(ctx: DosContext): DosHandlerResult {
+  const ah = ctx.get8("ah");
+  if (ah === 0x86) {
+    // Wait CX:DX milliseconds. Time here is the step count, so there is
+    // nothing to wait for and the call returns at once.
+    ctx.setCF(0);
+    return { handled: true };
+  }
+  if (ah === 0x88) {
+    // Extended memory size in KB: none beyond the 640 KB of real mode.
+    ctx.reg.ax = 0;
+    return { handled: true };
+  }
+  return { handled: false };
 }

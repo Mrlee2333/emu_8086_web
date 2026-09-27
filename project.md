@@ -2,7 +2,7 @@
 
 A browser-based 8086 microprocessor assembler and step debugger — inspired by the classic emu8086 Windows application, rebuilt for the web by **Nafis Islam Kabbo**.
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 
 ## Goals
 
@@ -18,7 +18,7 @@ A browser-based 8086 microprocessor assembler and step debugger — inspired by 
 
 ## Feature matrix
 
-| Feature | Classic emu8086 | emu8086web 1.4 | Planned |
+| Feature | Classic emu8086 | emu8086web 1.5 | Planned |
 |---------|-----------------|----------------|---------|
 | MASM-style `.asm` source | Yes | Yes | — |
 | Compile / Step / Run (+ Step Back) | Yes | Yes | — |
@@ -27,8 +27,8 @@ A browser-based 8086 microprocessor assembler and step debugger — inspired by 
 | Named save | Yes | Yes | — |
 | Registers & flags (+ ALU view) | Yes | Yes | — |
 | Memory dump | Yes | Yes | — |
-| Console I/O (INT 21h/10h/16h) | Yes | Broad text I/O | Graphics |
-| Full instruction set | Yes | Broad interpretive set | Gaps filled over time |
+| Console I/O (INT 21h/10h/16h) | Yes | Broad text I/O + in-memory files | Graphics |
+| Full instruction set | Yes | Broad interpretive set, corpus-verified | Gaps filled over time |
 | Breakpoints | Yes | Yes | — |
 | Offline macOS app | No | Yes (Electron, auto-update, native menu) | — |
 | Share links | No | Yes (TTL short URLs) | — |
@@ -48,6 +48,11 @@ public/                 Logo, favicon, ads.txt, llms.txt, manifest
 
 Interpretive engine: source → instruction list → execute. Flat teaching memory model (`@data` → 0).
 
+Correctness is measured, not assumed: 461 of the 525 programs in
+[Amey-Thakur/8086-ASSEMBLY-LANGUAGE-PROGRAMS](https://github.com/Amey-Thakur/8086-ASSEMBLY-LANGUAGE-PROGRAMS)
+produce byte-identical output, and 136 of them run in `bun test`
+(see [docs/corpus-coverage.md](docs/corpus-coverage.md)).
+
 ## Non-goals (for now)
 
 - Cycle-accurate or binary-faithful `.com` execution
@@ -60,7 +65,7 @@ Interpretive engine: source → instruction list → execute. Flat teaching memo
 2. INT 10h graphics modes
 3. Optional binary encoding layer
 4. Embedded tutorials
-5. Fill remaining instruction edge cases from contributor PRs
+5. Fill remaining instruction edge cases, measured against a third-party corpus
 
 ## License
 

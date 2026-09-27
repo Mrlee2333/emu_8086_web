@@ -36,8 +36,11 @@ The application root `/` opens the IDE directly. Agents may request `Accept: tex
 
 ## Documentation
 
-- README.md — setup and usage
+- README.md — what it is, features, how to run it
+- docs/installation.md — web and macOS app setup, self-hosting, troubleshooting
 - docs/emulator.md — instruction and interrupt matrix
+- docs/corpus-coverage.md — conformance results against a third-party corpus
+- docs/thanks.md — the projects this one leans on, with licences
 - project.md — product vision and roadmap
 - CONTRIBUTING.md — how to contribute
 

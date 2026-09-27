@@ -8,6 +8,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.0",
+    date: "2026-09-28",
+    highlights: [
+      "Fix: CALL now pushes the return address, so a PUSH BP / MOV BP, SP frame finds its arguments where it should — recursion, stack arguments and stack measurement were all computing the wrong answer (7 factorial came out as 1)",
+      "Fix: the shift and rotate instructions keep the carry they set, SHL sets overflow, and DAA / DAS no longer discard the carry that packed BCD addition depends on",
+      "Fix: IMUL multiplies a signed byte into AX and a signed word into DX:AX, and the two- and three-operand forms work",
+      "Fix: LAHF loads AH rather than AL, PUSHF sets the reserved high bits the 8086 reads as one, and the polling services set the zero flag",
+      "Fix: a negative displacement such as [DI-2] is no longer ignored, a bare label with a displacement is an operand, and a constant spelled like a number (EACH EQU 4) is read as the constant",
+      "Assembler: EQU and constant expressions, $ minus a label, octal and NOT in an operand, data declared in the code segment, code labels in a dispatch table, ORG, and indirect JMP / CALL",
+      "DOS: an in-memory file system behind AH=3Bh to 42h, with the real error convention of carry set and the reason in AX; files never reach the host",
+      "Ports: IN and OUT address a latch, so a program can follow a transfer it wrote itself",
+      "Correctness: 461 of the 525 programs in a third-party corpus now produce byte-identical output, up from 133 — see docs/thanks.md and docs/corpus-coverage.md",
+      "Tests: 136 of those programs are kept as fixtures and run in bun test in about 0.2 s, so a changed answer fails the build",
+    ],
+  },
+  {
     version: "1.4.2",
     date: "2026-09-28",
     highlights: [

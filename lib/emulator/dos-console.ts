@@ -42,6 +42,14 @@ export class DosConsole {
     return this.col;
   }
 
+  /** Move the cursor, for INT 10h AH=02h. Clamped to the screen. */
+  setCursor(row: number, col: number): void {
+    this.row = Math.max(0, Math.min(row, 24));
+    this.ensureRow(this.row);
+    this.col = Math.max(0, col);
+    this.version += 1;
+  }
+
   /** Serializable console state for step-back / time-travel restore. */
   getState(): { lines: string[]; row: number; col: number } {
     return { lines: [...this.lines], row: this.row, col: this.col };

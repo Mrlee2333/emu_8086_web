@@ -1,5 +1,7 @@
 /** Core types for the interpretive 8086 assembler and emulator. */
 
+import type { DosFiles } from "./dos-files";
+
 export type FlagName =
   | "CF"
   | "PF"
@@ -57,6 +59,8 @@ export interface AssembledProgram {
   dataVars: Record<string, DataVariable>;
   instrs: Instruction[];
   labels: Record<string, number>;
+  /** Constants defined with EQU or `=`, resolved at assembly time. */
+  symbols: Record<string, number>;
   entry: number;
 }
 
@@ -76,7 +80,13 @@ export interface MachineSnapshot {
   waitingForInput: boolean;
 }
 
-/** Full reversible CPU state for Step Back (snapshot + memory + console). */
+/**
+ * Full reversible CPU state for Step Back (snapshot + memory + console).
+ *
+ * The port latch is included so a step back over `OUT` reads the port as it
+ * stood. The DOS file system is not: it is a store of whole files rather than
+ * machine registers, and rewinding it is not worth the memory.
+ */
 export interface FullMachineState {
   reg: Registers;
   flags: Flags;
@@ -90,6 +100,7 @@ export interface FullMachineState {
   waitingForInput: boolean;
   mem: Uint8Array;
   console: { lines: string[]; row: number; col: number };
+  ports: [number, number][];
 }
 
 export interface DosContext {
@@ -105,6 +116,19 @@ export interface DosContext {
   readInputChar: () => string | null;
   peekInputChar: () => string | null;
   waitingForInput: boolean;
+  /** Carry flag, the DOS convention for reporting an error. */
+  setCF: (value: number) => void;
+  /** Zero flag, which the polling services use to say "nothing waiting". */
+  setZF: (value: number) => void;
+  /** Text console cursor, for the BIOS video services. */
+  getCursor: () => { row: number; col: number };
+  setCursor: (row: number, col: number) => void;
+  clearScreen: () => void;
+  /** Current video mode, for INT 10h AH=0Fh. */
+  getVideoMode: () => number;
+  setVideoMode: (mode: number) => void;
+  /** In-memory files behind the INT 21h file services. */
+  files: DosFiles;
 }
 
 export interface DosHandlerResult {

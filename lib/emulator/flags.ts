@@ -29,8 +29,18 @@ export function flagsToWord(flags: Flags): number {
   return word & 0xffff;
 }
 
-export function flagsFromWord(word: number): Flags {
-  return {
+/**
+ * The word PUSHF writes to the stack.
+ *
+ * Bits 12 to 15 of the flags register are not flags at all: the 8086 has no
+ * logic there and reads them as one, so a pushed word always ends in F. Bit 1
+ * is the same story and is already set by `flagsToWord`. POPF ignores them.
+ */
+export function pushfWord(flags: Flags): number {
+  return (flagsToWord(flags) | 0xf000) & 0xffff;
+}
+
+export function flagsFromWord(word: number): Flags {  return {
     CF: word & 0x0001 ? 1 : 0,
     PF: word & 0x0004 ? 1 : 0,
     AF: word & 0x0010 ? 1 : 0,
@@ -80,4 +90,25 @@ export function setLogicFlags(flags: Flags, result: number, size: 1 | 2): void {
   flags.PF = parityOf(result & 0xff);
   flags.CF = 0;
   flags.OF = 0;
+}
+
+/**
+ * Flags after a shift. `carry` and `overflow` come from the shifter, which is
+ * the only place that knows which bit left and what the old sign bit was, so
+ * they must be handed in rather than cleared.
+ */
+export function setShiftFlags(
+  flags: Flags,
+  result: number,
+  size: 1 | 2,
+  carry: number,
+  overflow: number,
+): void {
+  const mask = size === 2 ? 0xffff : 0xff;
+  const signBit = size === 2 ? 0x8000 : 0x80;
+  flags.ZF = (result & mask) === 0 ? 1 : 0;
+  flags.SF = result & signBit ? 1 : 0;
+  flags.PF = parityOf(result & 0xff);
+  flags.CF = carry ? 1 : 0;
+  flags.OF = overflow ? 1 : 0;
 }
