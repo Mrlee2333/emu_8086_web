@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -49,6 +50,85 @@ const LINE_H = 20;
 const PAD_Y = 12;
 const HISTORY_LIMIT = 200;
 
+type Token = ReturnType<typeof tokenizeAsmLine>[number];
+
+/**
+ * One gutter cell. Split out and memoized on primitives because a step
+ * changes `currentLine`, which would otherwise re-reconcile one cell per line
+ * of the program on every single emulator tick.
+ */
+const GutterRow = memo(function GutterRow({
+  line,
+  isCurrent,
+  isBp,
+  isErr,
+  title,
+  onToggleBreakpoint,
+}: {
+  line: number;
+  isCurrent: boolean;
+  isBp: boolean;
+  isErr: boolean;
+  title: string;
+  onToggleBreakpoint: (line: number) => void;
+}) {
+  return (
+    <div
+      className={`relative h-5 cursor-pointer px-1 hover:text-amber ${
+        isErr ? "font-semibold text-red underline decoration-red" : ""
+      }`}
+      onClick={() => onToggleBreakpoint(line)}
+      title={title}
+    >
+      {isBp && (
+        <span className="absolute top-0 left-0.5 text-[10px] text-red">●</span>
+      )}
+      {isErr ? "!" : isCurrent ? "▶" : line}
+    </div>
+  );
+});
+
+/**
+ * The syntax-highlight overlay that sits under the transparent textarea.
+ *
+ * Every cell is a `<span>` per token, so a 500-line program is a few thousand
+ * nodes. Its inputs (`highlightRows`, wrapping, tab size) do not change when
+ * the emulator steps, so memoizing it keeps those nodes out of every tick's
+ * reconcile. The ref is forwarded because scrolling syncs all three layers.
+ */
+const TokenOverlay = memo(
+  forwardRef<HTMLPreElement, {
+    rows: Token[][];
+    wordWrap: boolean;
+    tabSize: TabSize;
+  }>(function TokenOverlay({ rows, wordWrap, tabSize }, ref) {
+    return (
+      <pre
+        ref={ref}
+        aria-hidden
+        className={`pointer-events-none absolute inset-0 z-0 overflow-hidden px-3.5 py-3 font-mono text-[13px] leading-5 ${
+          wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+        }`}
+        style={{ tabSize }}
+      >
+        {rows.map((tokens, i) => (
+          <div key={i} className="leading-5">
+            {tokens.length === 0 ? (
+              <span>&nbsp;</span>
+            ) : (
+              tokens.map((t, j) => (
+                <span key={j} className={tokenClass(t.kind)}>
+                  {t.value}
+                </span>
+              ))
+            )}
+          </div>
+        ))}
+      </pre>
+    );
+  }),
+);
+
 function selectedLineRange(value: string, start: number, end: number) {
   const lineStart = value.lastIndexOf("\n", start - 1) + 1;
   const searchFrom =
@@ -78,7 +158,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
   const gutterRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const lineCount = source.split("\n").length;
   const indent = " ".repeat(tabSize);
 
   // v1.4.0 syntax highlight rows (capped so huge pastes stay responsive).
@@ -87,6 +166,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     if (lines.length > 5000) return null;
     return lines.map((line) => tokenizeAsmLine(line));
   }, [source]);
+
+  // Derived from the memoized rows: the gutter must not re-split the document
+  // on every emulator tick.
+  const lineCount = highlightRows ? highlightRows.length : source.split("\n").length;
 
   const historyRef = useRef<string[]>([source]);
   const histIndexRef = useRef(0);
@@ -459,31 +542,23 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       >
         {Array.from({ length: lineCount }, (_, i) => {
           const line = i + 1;
-          const isCurrent = line === currentLine;
-          const isBp = breakpoints.has(line);
           const isErr = line === errorLine;
           return (
-            <div
+            <GutterRow
               key={line}
-              className={`relative h-5 cursor-pointer px-1 hover:text-amber ${
-                isErr ? "font-semibold text-red underline decoration-red" : ""
-              }`}
-              onClick={() => onToggleBreakpoint(line)}
+              line={line}
+              isCurrent={line === currentLine}
+              isBp={breakpoints.has(line)}
+              isErr={isErr}
               title={
                 isErr
                   ? shortErr ?? "Error on this line"
-                  : isBp
+                  : breakpoints.has(line)
                     ? "Remove breakpoint"
                     : "Set breakpoint"
               }
-            >
-              {isBp && (
-                <span className="absolute top-0 left-0.5 text-[10px] text-red">
-                  ●
-                </span>
-              )}
-              {isErr ? "!" : isCurrent ? "▶" : line}
-            </div>
+              onToggleBreakpoint={onToggleBreakpoint}
+            />
           );
         })}
       </div>
@@ -509,28 +584,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         )}
 
         {highlightRows ? (
-          <pre
+          <TokenOverlay
             ref={highlightRef}
-            aria-hidden
-            className={`pointer-events-none absolute inset-0 z-0 overflow-hidden px-3.5 py-3 font-mono text-[13px] leading-5 ${
-              wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
-            }`}
-            style={{ tabSize }}
-          >
-            {highlightRows.map((tokens, i) => (
-              <div key={i} className="leading-5">
-                {tokens.length === 0 ? (
-                  <span>&nbsp;</span>
-                ) : (
-                  tokens.map((t, j) => (
-                    <span key={j} className={tokenClass(t.kind)}>
-                      {t.value}
-                    </span>
-                  ))
-                )}
-              </div>
-            ))}
-          </pre>
+            rows={highlightRows}
+            wordWrap={wordWrap}
+            tabSize={tabSize}
+          />
         ) : null}
 
         <textarea

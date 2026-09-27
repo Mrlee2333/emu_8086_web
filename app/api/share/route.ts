@@ -6,6 +6,10 @@ import {
   type ShareTtlDays,
 } from "@/lib/share/constants";
 import {
+  rejectCrossOrigin,
+  rejectOversizedBody,
+} from "@/lib/share/request-guards";
+import {
   checkShareCreateRateLimit,
   clientIpFromRequest,
 } from "@/lib/share/rate-limit";
@@ -30,6 +34,9 @@ export async function POST(req: Request) {
       { status: 503 },
     );
   }
+
+  const forbidden = rejectCrossOrigin(req) ?? rejectOversizedBody(req);
+  if (forbidden) return forbidden;
 
   const ip = clientIpFromRequest(req);
   const limit = checkShareCreateRateLimit(ip);

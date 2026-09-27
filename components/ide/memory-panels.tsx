@@ -6,10 +6,15 @@ import type { Machine } from "@/lib/emulator/machine";
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { hex2, hex4 } from "@/lib/emulator";
 import {
-  countMatches,
-  findNextMatch,
   parseSearchPattern,
+  searchAndCount,
 } from "@/lib/ide/memory-search";
+
+/** Rows rendered per stack panel; the container scrolls beyond this. */
+const MAX_VISIBLE_STACK_ROWS = 64;
+
+/** Stable empty stand-in so the null-machine case allocates nothing. */
+const EMPTY: number[] = [];
 
 interface MemoryPanelsProps {
   assembled: AssembledProgram | null;
@@ -105,10 +110,13 @@ export function HexDumpPanel({
       setStatus("Enter hex bytes (48 65) or text");
       return;
     }
-    let hit = findNextMatch(mem, pattern, from);
+    // One pass answers "next hit" and "how many" — counting used to rescan
+    // the whole 64 KiB space once per match.
+    const first = searchAndCount(mem, pattern, from);
+    let hit = first.next;
     let wrapped = false;
     if (hit < 0 && allowWrap && from > 0) {
-      hit = findNextMatch(mem, pattern, 0);
+      hit = searchAndCount(mem, pattern, 0).next;
       wrapped = hit >= 0;
     }
     if (hit < 0) {
@@ -117,7 +125,7 @@ export function HexDumpPanel({
       return;
     }
     jumpTo(hit);
-    const total = countMatches(mem, pattern);
+    const total = first.count;
     setStatus(
       `0x${hit.toString(16).padStart(4, "0").toUpperCase()} · ${total} match${total === 1 ? "" : "es"}${wrapped ? " · wrapped" : ""}`,
     );
@@ -239,8 +247,16 @@ export function HexDumpPanel({
 }
 
 export function StackPanels({ machine }: { machine: Machine | null }) {
-  const dataStack = machine?.dataStack ?? [];
-  const callStack = machine?.callStack ?? [];
+  const dataStack = machine?.dataStack ?? EMPTY;
+  const callStack = machine?.callStack ?? EMPTY;
+  // The panels are fixed-height scrollers, so only the newest rows are ever
+  // visible. Rendering all of them costs one <tr> per push, every tick.
+  // Deliberately not memoized: Machine mutates these arrays in place, so an
+  // identity-keyed memo would hand back a stale slice.
+  const dataRows = dataStack.slice(-MAX_VISIBLE_STACK_ROWS).reverse();
+  const callRows = callStack.slice(-MAX_VISIBLE_STACK_ROWS).reverse();
+  const hiddenData = dataStack.length - dataRows.length;
+  const hiddenCalls = callStack.length - callRows.length;
 
   return (
     <>
@@ -258,7 +274,7 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
               </tr>
             </thead>
             <tbody>
-              {[...dataStack].reverse().map((v, i) => (
+              {dataRows.map((v, i) => (
                 <tr key={i} className="border-b border-line/30">
                   <td className="px-2.5 py-1">SP+{i * 2}</td>
                   <td className="px-2.5 py-1">{hex4(v)}</td>
@@ -268,6 +284,11 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
             </tbody>
           </table>
         )}
+        {hiddenData > 0 ? (
+          <p className="px-3.5 py-1 text-[10px] text-ink-dim">
+            {hiddenData} older value{hiddenData === 1 ? "" : "s"} not shown.
+          </p>
+        ) : null}
       </div>
       </CollapsibleSection>
       <CollapsibleSection title="Call stack" storageKey="stack-calls">
@@ -276,11 +297,16 @@ export function StackPanels({ machine }: { machine: Machine | null }) {
           <p className="px-3.5 py-3 text-xs text-ink-dim">No active calls.</p>
         ) : (
           <ul className="px-3.5 py-2 font-mono text-xs text-ink">
-            {[...callStack].reverse().map((ip, i) => (
+            {callRows.map((ip, i) => (
               <li key={i} className="py-0.5">
                 return → instr #{ip}
               </li>
             ))}
+            {hiddenCalls > 0 ? (
+              <li className="py-0.5 text-[10px] text-ink-dim">
+                {hiddenCalls} older frame{hiddenCalls === 1 ? "" : "s"} not shown.
+              </li>
+            ) : null}
           </ul>
         )}
       </div>

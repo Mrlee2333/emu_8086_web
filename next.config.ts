@@ -6,6 +6,55 @@ const linkHeader = [
   '</.well-known/agent-skills/index.json>; rel="describedby"; type="application/json"',
 ].join(", ");
 
+/** AdSense is behind NEXT_PUBLIC_ENABLE_ADS, so its origins are allowlisted conditionally. */
+const adsEnabled = (() => {
+  const raw = process.env.NEXT_PUBLIC_ENABLE_ADS?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
+})();
+
+const scriptSrc = [
+  "'self'",
+  // Next injects inline bootstrap/hydration scripts; these hashes are not
+  // static because they vary per build, so 'unsafe-inline' is the pragmatic
+  // floor here. 'strict-dynamic' lets the trusted bundles load the rest.
+  "'unsafe-inline'",
+  ...(adsEnabled
+    ? [
+        "https://pagead2.googlesyndication.com",
+        "https://googleads.g.doubleclick.net",
+        "https://tpc.googlesyndication.com",
+      ]
+    : []),
+  ...(process.env.VERCEL ? ["https://va.vercel-scripts.com"] : []),
+].join(" ");
+
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+  },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      `script-src ${scriptSrc}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      ...(process.env.VERCEL ? [] : ["upgrade-insecure-requests"]),
+    ].join("; "),
+  },
+];
+
 const nextConfig: NextConfig = {
   // Standalone server output feeds the offline Electron shell
   // (`electron/dist:mac` forks `.next/standalone/server.js`).
@@ -19,7 +68,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/",
-        headers: [{ key: "Link", value: linkHeader }],
+        headers: [{ key: "Link", value: linkHeader }, ...securityHeaders],
       },
       {
         source: "/:path*",
@@ -28,6 +77,7 @@ const nextConfig: NextConfig = {
             key: "Content-Signal",
             value: "ai-train=yes, search=yes, ai-input=yes",
           },
+          ...securityHeaders,
         ],
       },
     ];

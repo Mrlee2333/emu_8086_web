@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   assemble,
-  AUTOSAVE_KEY,
   createMachine,
   DEFAULT_SOURCE,
   encodeProgramToShare,
@@ -19,8 +18,35 @@ import { Machine } from "@/lib/emulator/machine";
 
 export type Theme = "dark" | "light";
 
-/** Cap step-back history (each entry holds a 64 KiB memory copy). */
-export const MAX_STEP_HISTORY = 512;
+/**
+ * Cap step-back history (each entry holds a 64 KiB memory copy, so 256 entries
+ * is ~16 MiB of retained snapshots).
+ */
+export const MAX_STEP_HISTORY = 256;
+
+/**
+ * Minimum wall-clock gap between step-back checkpoints taken during a
+ * continuous Run.
+ *
+ * Step Back's contract is "undo a Run burst", not "undo every 16 ms slice".
+ * Capturing on every loop tick burned 512 snapshots in ~8 seconds of running;
+ * at this cadence a long run records a few dozen, which is the same
+ * user-visible undo depth for a fraction of the memory.
+ */
+const RUN_CHECKPOINT_MS = 250;
+
+/** Instructions retired per animation frame before yielding to the browser. */
+const MAX_STEPS_PER_FRAME = 2000;
+
+/**
+ * Cap on how much wall-clock time a single frame may retire. A backgrounded
+ * tab delivers one huge `now - last` gap on return; without this the loop
+ * would try to catch up in a single task and lock the UI.
+ */
+const MAX_FRAME_MS = 250;
+
+/** Tick interval used while the document is hidden and rAF is suspended. */
+const HIDDEN_TICK_MS = 16;
 
 export function useEmulator(initialSource?: string) {
   const [source, setSource] = useState(initialSource ?? DEFAULT_SOURCE);
@@ -38,7 +64,8 @@ export function useEmulator(initialSource?: string) {
   const [tick, setTick] = useState(0);
   const [canStepBack, setCanStepBack] = useState(false);
 
-  const runTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const guardRef = useRef(0);
   const machineRef = useRef<Machine | null>(null);
   const breakpointsRef = useRef(breakpoints);
@@ -46,6 +73,16 @@ export function useEmulator(initialSource?: string) {
   const historyRef = useRef<FullMachineState[]>([]);
   /** True after Run until Pause / halt / reset — survives INT 21h input waits. */
   const keepRunningRef = useRef(false);
+  /** Read by the run loop so the Speed slider applies without restarting. */
+  const speedRef = useRef(runSpeed);
+  /** Instruction debt carried between frames, in milliseconds. */
+  const accRef = useRef(0);
+  /** `performance.now()` of the previous run frame. */
+  const lastFrameRef = useRef(0);
+  /** Timestamp of the last step-back checkpoint taken during a run. */
+  const lastCheckpointRef = useRef(0);
+  /** Latest run-loop body, so a queued frame always calls the current one. */
+  const loopRef = useRef<(now: number) => void>(() => {});
 
   useEffect(() => {
     machineRef.current = machine;
@@ -54,6 +91,10 @@ export function useEmulator(initialSource?: string) {
   useEffect(() => {
     breakpointsRef.current = breakpoints;
   }, [breakpoints]);
+
+  useEffect(() => {
+    speedRef.current = runSpeed;
+  }, [runSpeed]);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
@@ -71,20 +112,23 @@ export function useEmulator(initialSource?: string) {
     }
   }, []);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(AUTOSAVE_KEY, source);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [source]);
+  /** Cancel whichever kind of tick is pending. */
+  const cancelTick = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
   const stopTimer = useCallback(() => {
-    if (runTimerRef.current) {
-      clearInterval(runTimerRef.current);
-      runTimerRef.current = null;
-    }
+    cancelTick();
     guardRef.current = 0;
-  }, []);
+    accRef.current = 0;
+  }, [cancelTick]);
 
   const stopRun = useCallback(() => {
     keepRunningRef.current = false;
@@ -93,6 +137,7 @@ export function useEmulator(initialSource?: string) {
 
   const clearHistory = useCallback(() => {
     historyRef.current = [];
+    lastCheckpointRef.current = 0;
     setCanStepBack(false);
   }, []);
 
@@ -103,6 +148,20 @@ export function useEmulator(initialSource?: string) {
     }
     setCanStepBack(true);
   }, []);
+
+  /**
+   * Record a step-back checkpoint during a run, rate-limited so a long
+   * execution retains a handful of snapshots rather than one per frame.
+   */
+  const checkpoint = useCallback(
+    (m: Machine) => {
+      const now = performance.now();
+      if (now - lastCheckpointRef.current < RUN_CHECKPOINT_MS) return;
+      lastCheckpointRef.current = now;
+      pushHistory(m);
+    },
+    [pushHistory],
+  );
 
   const doAssemble = useCallback(() => {
     stopRun();
@@ -188,46 +247,143 @@ export function useEmulator(initialSource?: string) {
     updateRunStateFromMachine(m);
   }, [stopRun, updateRunStateFromMachine]);
 
-  const runBatch = useCallback(() => {
-    const m = machineRef.current;
-    if (!m || m.halted || m.err) {
-      stopRun();
-      if (m) updateRunStateFromMachine(m);
+  /**
+   * Queue the next run tick. Reads the loop body through a ref so the loop can
+   * reschedule itself without a self-referential closure.
+   *
+   * Uses rAF while the document is visible so stepping is aligned to the
+   * display and costs at most one render per frame. A hidden tab never gets
+   * rAF callbacks at all, which would leave the IDE showing "running" while
+   * frozen, so fall back to a timer there and resync on return.
+   */
+  const scheduleFrame = useCallback(() => {
+    if (typeof document !== "undefined" && document.hidden) {
+      timerRef.current = setTimeout(
+        () => loopRef.current(performance.now()),
+        HIDDEN_TICK_MS,
+      );
       return;
     }
-    if (m.waitingForInput) {
-      stopTimer();
-      updateRunStateFromMachine(m);
-      return;
-    }
+    rafRef.current = requestAnimationFrame((now) => loopRef.current(now));
+  }, []);
 
-    // One reversible checkpoint per batch so Step Back can undo a Run burst.
-    pushHistory(m);
-    let ok = true;
-    for (let i = 0; i < 200 && ok; i++) {
-      if (m.waitingForInput) break;
-      const line = m.getCurrentLine();
-      if (line !== null && breakpointsRef.current.has(line)) {
+  /**
+   * One animation frame of execution: retire however many instructions the
+   * elapsed time owes, then render at most once.
+   *
+   * This replaced a `setInterval`. The interval captured `runSpeed` when it was
+   * created, so the Speed slider did nothing until Run was pressed again, and
+   * each callback both retired instructions and forced a full-IDE React render
+   * in the same task. Driving from rAF makes the slider live, bounds the render
+   * rate to the display, and lets a fast program catch up inside one frame
+   * instead of queueing more timers than the browser will honour.
+   */
+  const runFrame = useCallback(
+    (now: number) => {
+      rafRef.current = null;
+      timerRef.current = null;
+      const m = machineRef.current;
+      if (!m) {
         stopRun();
-        updateRunStateFromMachine(m);
         return;
       }
-      ok = m.step();
-      guardRef.current++;
-      if (m.waitingForInput) break;
-      if (guardRef.current > INSTRUCTION_LIMIT) {
-        m.err = "Instruction limit exceeded (possible infinite loop).";
-        m.halted = true;
-        ok = false;
+
+      if (m.halted || m.err) {
+        updateRunStateFromMachine(m);
+        stopRun();
+        return;
       }
-    }
-    updateRunStateFromMachine(m);
-    if (m.waitingForInput) {
-      stopTimer();
-      return;
-    }
-    if (!ok || m.halted || m.err) stopRun();
-  }, [stopRun, stopTimer, updateRunStateFromMachine, pushHistory]);
+      if (m.waitingForInput) {
+        // Park on the prompt but stay "running" so provideInput can resume.
+        updateRunStateFromMachine(m);
+        stopTimer();
+        return;
+      }
+
+      const elapsed = Math.min(Math.max(now - lastFrameRef.current, 0), MAX_FRAME_MS);
+      lastFrameRef.current = now;
+      accRef.current += elapsed;
+
+      const perStep = Math.max(1, speedRef.current);
+      let executed = 0;
+      let paused = false;
+      let exhausted = false;
+
+      while (accRef.current >= perStep && executed < MAX_STEPS_PER_FRAME) {
+        if (m.waitingForInput) {
+          paused = true;
+          break;
+        }
+        const line = m.getCurrentLine();
+        if (line !== null && breakpointsRef.current.has(line)) {
+          paused = true;
+          break;
+        }
+        accRef.current -= perStep;
+        executed += 1;
+        guardRef.current += 1;
+        if (!m.step()) {
+          // step() also reports false when it parks for console input, which
+          // must keep the run intent alive so provideInput can resume.
+          if (m.waitingForInput) paused = true;
+          else exhausted = true;
+          break;
+        }
+        if (m.waitingForInput) {
+          paused = true;
+          break;
+        }
+        if (guardRef.current > INSTRUCTION_LIMIT) {
+          m.err = "Instruction limit exceeded (possible infinite loop).";
+          m.halted = true;
+          exhausted = true;
+          break;
+        }
+      }
+
+      // Dropped frames: keep the debt bounded so a slow program does not
+      // spiral into an ever-growing backlog.
+      if (accRef.current > MAX_FRAME_MS) accRef.current = MAX_FRAME_MS;
+
+      if (executed > 0) checkpoint(m);
+      if (executed > 0 || paused || exhausted) {
+        updateRunStateFromMachine(m);
+      }
+
+      if (exhausted) {
+        stopRun();
+        return;
+      }
+      if (paused) {
+        // A breakpoint or an input wait: park the loop but keep the run
+        // intent so typing into the console resumes execution.
+        if (m.waitingForInput) stopTimer();
+        else stopRun();
+        return;
+      }
+
+      scheduleFrame();
+    },
+    [checkpoint, scheduleFrame, stopRun, stopTimer, updateRunStateFromMachine],
+  );
+
+  // Keep the queued frame pointing at the current loop body.
+  useEffect(() => {
+    loopRef.current = runFrame;
+  }, [runFrame]);
+
+  // Coming back from a hidden tab: drop the accumulated debt so the first
+  // visible frame does not try to catch up on all the hidden time at once.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) return;
+      accRef.current = 0;
+      lastFrameRef.current = performance.now();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   const doRun = useCallback(() => {
     const m = machineRef.current;
@@ -236,9 +392,11 @@ export function useEmulator(initialSource?: string) {
     keepRunningRef.current = true;
     setRunState("running");
     guardRef.current = 0;
-    runTimerRef.current = setInterval(runBatch, runSpeed);
-    runBatch();
-  }, [runBatch, runSpeed, stopTimer]);
+    accRef.current = 0;
+    lastFrameRef.current = performance.now();
+    lastCheckpointRef.current = 0;
+    scheduleFrame();
+  }, [scheduleFrame, stopTimer]);
 
   const doPause = useCallback(() => {
     stopRun();
@@ -287,17 +445,18 @@ export function useEmulator(initialSource?: string) {
       if (!wasRunning) pushHistory(m);
       m.enqueueInput(chars);
       if (keepRunningRef.current) {
-        if (!runTimerRef.current) {
+        if (rafRef.current === null) {
           setRunState("running");
-          runTimerRef.current = setInterval(runBatch, runSpeed);
+          accRef.current = 0;
+          lastFrameRef.current = performance.now();
+          scheduleFrame();
         }
-        runBatch();
         return;
       }
       m.step();
       updateRunStateFromMachine(m);
     },
-    [runBatch, runSpeed, updateRunStateFromMachine, pushHistory],
+    [scheduleFrame, updateRunStateFromMachine, pushHistory],
   );
 
   useEffect(() => () => stopRun(), [stopRun]);

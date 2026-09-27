@@ -35,7 +35,10 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: bun install
+        # Frozen: this job ships the auto-updating binary, so it must build
+        # exactly the dependency tree that was reviewed, not whatever the
+        # `^` ranges resolve to today.
+        run: bun install --frozen-lockfile
 
       - name: Build macOS installers
         # NOTE: --publish never on purpose. electron-builder only uploads

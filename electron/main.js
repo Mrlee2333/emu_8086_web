@@ -261,6 +261,11 @@ function manualCheckForUpdates() {
 }
 
 function createWindow(url) {
+  try {
+    appOrigin = new URL(url).origin;
+  } catch {
+    appOrigin = "";
+  }
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -275,14 +280,45 @@ function createWindow(url) {
     },
   });
 
+  // The preload bridge (read/write/delete inside the opened folder) is attached
+  // to the top frame regardless of origin, so navigation must stay pinned to
+  // the bundled loopback server. Anything else opens in the system browser.
+  const isAppOrigin = (target) => {
+    try {
+      const parsed = new URL(target);
+      return (
+        parsed.protocol === "http:" &&
+        (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+        parsed.port === new URL(url).port
+      );
+    } catch {
+      return false;
+    }
+  };
+
   // External links open in the system browser, never in the app window.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (!target.startsWith("http://127.0.0.1:") && !target.startsWith("http://localhost:")) {
+    if (!isAppOrigin(target)) {
       void shell.openExternal(target);
       return { action: "deny" };
     }
     return { action: "allow" };
   });
+
+  // Without these, any top-level navigation hands the destination page a live
+  // window.electronAPI with folder read/write against the user's directory.
+  mainWindow.webContents.on("will-navigate", (event, target) => {
+    if (!isAppOrigin(target)) event.preventDefault();
+  });
+  mainWindow.webContents.on("will-redirect", (event, target) => {
+    if (!isAppOrigin(target)) event.preventDefault();
+  });
+  mainWindow.webContents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+  });
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
+  );
 
   void mainWindow.loadURL(url);
   mainWindow.on("closed", () => {
@@ -313,6 +349,8 @@ const {
 /** Main-side allowed root (set by the native folder picker only). */
 let allowedRoot = null;
 let allowedName = "";
+/** Origin (scheme://host:port) of the app window, used to vet IPC senders. */
+let appOrigin = "";
 
 function folderStatePath() {
   return path.join(app.getPath("userData"), "emu8086web-folder.json");
@@ -378,18 +416,51 @@ async function resolveInside(rel) {
   return target;
 }
 
+/**
+ * Resolve a MUTATION target (write / create / rename destination).
+ *
+ * `resolveInside` falls back to the unresolved path when realpath fails, which
+ * is exactly the dangling-symlink case: `evil.asm -> /tmp/out/pwn.asm` with a
+ * missing leaf makes realpath throw ENOENT, the guard passes, and the write
+ * follows the link out of the opened folder. So reject symlinked targets
+ * outright and re-check the parent directory, which is the part that gets
+ * created by `mkdir -p` and can itself be linked.
+ */
+async function resolveForWrite(rel) {
+  const abs = await resolveInside(rel);
+  const link = await fs.lstat(abs).catch(() => null);
+  if (link?.isSymbolicLink()) {
+    throw new Error("Symbolic links are not writable targets");
+  }
+  const absRoot = await fs.realpath(path.resolve(allowedRoot));
+  const realParent = await fs
+    .realpath(path.dirname(abs))
+    .catch(() => path.dirname(abs));
+  const relCheck = path.relative(absRoot, realParent);
+  if (relCheck === ".." || relCheck.startsWith(`..${path.sep}`) || path.isAbsolute(relCheck)) {
+    throw new Error("Path escapes the opened folder");
+  }
+  return abs;
+}
+
 /** Resolve a mutable source FILE (extension + dotfile policy enforced). */
 async function resolveSourceFile(rel) {
   if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
   return resolveInside(rel);
 }
 
-/** Resolve a mutable DIRECTORY (no hidden segments). */
-async function resolveSourceDir(rel) {
+/** Resolve a writable source FILE (symlink-safe). */
+async function resolveWritableFile(rel) {
+  if (!isSourceFileRel(rel)) throw new Error("Only .asm/.txt/.inc files");
+  return resolveForWrite(rel);
+}
+
+/** Resolve a creatable DIRECTORY (symlink-safe). */
+async function resolveWritableDir(rel) {
   if (!isSafeRelPath(rel) || !hasNoDotSegments(rel)) {
     throw new Error("Invalid folder path");
   }
-  return resolveInside(rel);
+  return resolveForWrite(rel);
 }
 
 async function listFolderRecursive(root) {
@@ -428,11 +499,32 @@ async function listFolderRecursive(root) {
 
 let folderIpcRegistered = false;
 
+/**
+ * The folder bridge is privileged (read/write/delete under the opened root),
+ * so only the app's own window may drive it. `will-navigate` already pins the
+ * top frame, but a second window on the same loopback server shares the
+ * preload, so vet the sender explicitly.
+ */
+function handleTrusted(channel, listener) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (!appOrigin) throw new Error("Folder bridge unavailable");
+    const frameUrl = event.senderFrame?.url ?? "";
+    let origin = "";
+    try {
+      origin = new URL(frameUrl).origin;
+    } catch {
+      /* fall through to the rejection below */
+    }
+    if (origin !== appOrigin) throw new Error("Untrusted sender");
+    return listener(event, ...args);
+  });
+}
+
 function registerFolderIpc() {
   if (folderIpcRegistered) return;
   folderIpcRegistered = true;
 
-  ipcMain.handle("emu8086web:open-folder", async () => {
+  handleTrusted("emu8086web:open-folder", async () => {
     const res = await dialog.showOpenDialog(focusedWindow() ?? undefined, {
       properties: ["openDirectory", "createDirectory"],
     });
@@ -443,21 +535,21 @@ function registerFolderIpc() {
     return { root: allowedRoot, name: allowedName };
   });
 
-  ipcMain.handle("emu8086web:get-folder", async () => {
+  handleTrusted("emu8086web:get-folder", async () => {
     if (!allowedRoot) return null;
     return { root: allowedRoot, name: allowedName };
   });
 
-  ipcMain.handle("emu8086web:close-folder", async () => {
+  handleTrusted("emu8086web:close-folder", async () => {
     clearAllowedRoot();
   });
 
-  ipcMain.handle("emu8086web:list-folder", async () => {
+  handleTrusted("emu8086web:list-folder", async () => {
     if (!allowedRoot) throw new Error("No folder open");
     return listFolderRecursive(allowedRoot);
   });
 
-  ipcMain.handle("emu8086web:read-folder-file", async (_e, rel) => {
+  handleTrusted("emu8086web:read-folder-file", async (_e, rel) => {
     const abs = await resolveSourceFile(rel);
     const st = await fs.stat(abs);
     if (!st.isFile()) throw new Error("Not a file");
@@ -465,30 +557,30 @@ function registerFolderIpc() {
     return fs.readFile(abs, "utf8");
   });
 
-  ipcMain.handle(
+  handleTrusted(
     "emu8086web:write-folder-file",
     async (_e, rel, content) => {
       if (typeof content !== "string") throw new Error("Invalid content");
       if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
         throw new Error("File too large (256 KiB cap)");
       }
-      const abs = await resolveSourceFile(rel);
+      const abs = await resolveWritableFile(rel);
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, content, "utf8");
     },
   );
 
-  ipcMain.handle(
+  handleTrusted(
     "emu8086web:create-folder-entry",
     async (_e, rel, isDirectory) => {
       if (isDirectory !== true && isDirectory !== false) {
         throw new Error("Invalid isDirectory");
       }
       if (isDirectory) {
-        const abs = await resolveSourceDir(rel);
+        const abs = await resolveWritableDir(rel);
         await fs.mkdir(abs, { recursive: true });
       } else {
-        const abs = await resolveSourceFile(rel);
+        const abs = await resolveWritableFile(rel);
         await fs.mkdir(path.dirname(abs), { recursive: true });
         try {
           const handle = await fs.open(abs, "wx");
@@ -501,7 +593,7 @@ function registerFolderIpc() {
     },
   );
 
-  ipcMain.handle("emu8086web:rename-folder-entry", async (_e, oldRel, newRel) => {
+  handleTrusted("emu8086web:rename-folder-entry", async (_e, oldRel, newRel) => {
     if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
       throw new Error("Invalid path");
     }
@@ -513,7 +605,7 @@ function registerFolderIpc() {
       throw new Error("Only .asm/.txt/.inc files");
     }
     const from = await resolveInside(oldRel);
-    const to = await resolveInside(newRel);
+    const to = await resolveForWrite(newRel);
     try {
       await fs.access(to);
       throw new Error("Already exists");
@@ -525,7 +617,7 @@ function registerFolderIpc() {
     await fs.rename(from, to);
   });
 
-  ipcMain.handle("emu8086web:delete-folder-entry", async (_e, rel) => {
+  handleTrusted("emu8086web:delete-folder-entry", async (_e, rel) => {
     if (!hasNoDotSegments(rel)) throw new Error("Invalid path");
     const abs = await resolveInside(rel);
     const st = await fs.lstat(abs);

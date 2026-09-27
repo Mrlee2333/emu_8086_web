@@ -250,3 +250,49 @@ ${footer}`);
     assert.equal(c.cursorRow, DosConsole.MAX_LINES - 1);
   });
 });
+
+describe("DosConsole text memoization", () => {
+  it("reuses the same string until the console mutates", () => {
+    const c = new DosConsole();
+    c.write("hi");
+    const first = c.text;
+    assert.equal(c.text, first, "unchanged console must not re-join");
+
+    c.write("!");
+    const second = c.text;
+    assert.notEqual(second, first, "a write must invalidate the cache");
+    assert.equal(second, "hi!");
+  });
+
+  it("invalidates on CR, LF, backspace, clear and restore", () => {
+    const c = new DosConsole();
+    c.write("abc");
+    const base = c.text;
+
+    c.write("\b");
+    const afterBackspace = c.text;
+    assert.equal(afterBackspace, "ab");
+    assert.notEqual(afterBackspace, base);
+
+    c.write("\r");
+    assert.equal(c.text, c.text, "CR alone changes no rendered text");
+    c.write("X");
+    assert.equal(c.text, "Xb", "CR returns to column 0 and overwrites");
+
+    const beforeLF = c.text;
+    c.write("\n");
+    // LF moves down but keeps the column, so "tail" lands at col 1.
+    c.write("tail");
+    assert.equal(c.text, "Xb\n tail");
+    assert.notEqual(c.text, beforeLF);
+
+    const snapshot = c.getState();
+    const beforeClear = c.text;
+    c.clear();
+    assert.equal(c.text, "");
+    assert.notEqual(c.text, beforeClear);
+
+    c.setState(snapshot);
+    assert.equal(c.text, "Xb\n tail", "restore must invalidate the cache");
+  });
+});

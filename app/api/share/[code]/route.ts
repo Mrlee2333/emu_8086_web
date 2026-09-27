@@ -48,10 +48,15 @@ export async function GET(_req: Request, { params }: Params) {
     return NextResponse.json({ error: "Share expired" }, { status: 410 });
   }
 
-  return NextResponse.json({
-    code: data.code,
-    source: data.source,
-    expiresAt: data.expires_at,
-    ttlDays: data.ttl_days,
-  });
+  return NextResponse.json(
+    {
+      code: data.code,
+      source: data.source,
+      expiresAt: data.expires_at,
+      ttlDays: data.ttl_days,
+    },
+    // Shared source is user content with a finite life: never let a CDN or a
+    // reverse proxy keep a copy past `expiresAt`.
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

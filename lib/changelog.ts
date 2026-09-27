@@ -8,6 +8,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.2",
+    date: "2026-09-28",
+    highlights: [
+      "Security: dependencies cleared of 2 critical + 8 high advisories (Next 16.3.6) — CI now fails on anything high or worse",
+      "Security: share rate limiting no longer trusts a client-supplied X-Forwarded-For, and the cross-origin POST that could fill the share table is rejected",
+      "Security: Content-Security-Policy and the standard security headers, previously absent, now ship on the web and desktop builds",
+      "Security: the desktop app can no longer be navigated off its own origin while holding the folder read/write bridge",
+      "Fix: the Speed slider now applies while a program is running (it previously did nothing until Run was pressed again)",
+      "Fix: Step Back no longer retains tens of megabytes — checkpoints during a run are rate-limited and the shadow stacks are capped",
+      "Performance: a run renders at most once per frame, the console is no longer re-joined on every render, and the workspace is no longer written to storage on every keystroke",
+      "First-load JS for the IDE dropped ~76 KB by moving the QR encoder behind a dynamic import; CI now gates on a bundle budget",
+    ],
+  },
+  {
     version: "1.4.1",
     date: "2026-09-26",
     highlights: [

@@ -16,6 +16,7 @@ import {
   saveOverrides,
   SCHEME_KEY,
   SHORTCUT_DEFS,
+  shortcutDef,
   type Chord,
   type OsView,
   type OverrideMap,
@@ -99,18 +100,9 @@ export function ShortcutsHelp() {
   }, [onRecordKey, recording]);
 
   const labelFor = (id: ShortcutId, defMac: Chord, defWin: Chord) => {
-    const mac = getEffectiveChord(
-      SHORTCUT_DEFS.find((d) => d.id === id)!,
-      scheme,
-      "mac",
-      overrides,
-    );
-    const win = getEffectiveChord(
-      SHORTCUT_DEFS.find((d) => d.id === id)!,
-      scheme,
-      "windows",
-      overrides,
-    );
+    const def = shortcutDef(id)!;
+    const mac = getEffectiveChord(def, scheme, "mac", overrides);
+    const win = getEffectiveChord(def, scheme, "windows", overrides);
     void defMac;
     void defWin;
     if (resolved === "both") return formatChordBoth(mac, win);
