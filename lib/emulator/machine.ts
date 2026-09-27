@@ -9,12 +9,16 @@ import { dosByteToPrintable } from "./cp437";
 import { DosConsole } from "./dos-console";
 import { AsmError } from "./errors";
 import { handleInterrupt } from "./dos";
+import { DosFiles } from "./dos-files";
+import { evalExpr } from "./expr";
 import {
   createDefaultFlags,
   flagsFromWord,
   flagsToWord,
+  pushfWord,
   setFlagsAfterOp,
   setLogicFlags,
+  setShiftFlags,
 } from "./flags";
 import type {
   AssembledProgram,
@@ -25,7 +29,7 @@ import type {
   Reg8Name,
   Registers,
 } from "./types";
-import { parseNumber, writeUnit } from "./utils";
+import { parityOf, parseNumber, writeUnit } from "./utils";
 
 /** Interpretive 8086 CPU for classroom assembly programs. */
 export class Machine {
@@ -43,6 +47,12 @@ export class Machine {
   err: string | null = null;
   inputQueue: string[] = [];
   waitingForInput = false;
+  /** In-memory DOS file system behind INT 21h AH=3Bh and friends. */
+  files = new DosFiles();
+  /** Latched I/O ports, keyed by port number. */
+  private ports = new Map<number, number>();
+  /** Active video mode, for INT 10h AH=0Fh. */
+  private videoMode = 0x03;
 
   /** Serialized console text for the CRT / clipboard. */
   get output(): string {
@@ -100,6 +110,14 @@ export class Machine {
     if (firstBracket === -1) {
       const name = t.toLowerCase();
       if (this.a.dataVars[name]) return this.a.dataVars[name].addr;
+      // A direct operand may carry a displacement without brackets:
+      // `SEEN+2` is the third cell after SEEN.
+      const bare = t.match(/^(\w+)([\s+-].*)$/);
+      if (bare && this.a.dataVars[bare[1]!.toLowerCase()]) {
+        const off = this.evalIndex(bare[2]!);
+        if (off === null) return null;
+        return this.a.dataVars[bare[1]!.toLowerCase()]!.addr + off;
+      }
       return null;
     }
 
@@ -108,24 +126,40 @@ export class Machine {
     const brackets: string[] = [];
     let m: RegExpExecArray | null;
     while ((m = bracketRe.exec(t)) !== null) {
-      brackets.push(m[1].trim());
+      brackets.push(m[1]!.trim());
     }
     if (brackets.length === 0) return null;
 
     let addr = 0;
-    if (base && this.a.dataVars[base]) addr += this.a.dataVars[base].addr;
+    if (base) {
+      if (this.a.dataVars[base]) addr += this.a.dataVars[base].addr;
+      else if (this.a.symbols[base] !== undefined) addr += this.a.symbols[base];
+    }
     for (const offsetExpr of brackets) {
-      for (const p of offsetExpr.split("+").map((x) => x.trim())) {
-        const key = p.toLowerCase();
-        if (this.isReg16(key)) addr += this.reg[key];
-        else {
-          const n = parseNumber(p);
-          if (n !== null) addr += n;
-        }
-      }
+      const value = this.evalIndex(offsetExpr);
+      if (value === null) return null;
+      addr += value;
     }
     return addr;
   }
+
+  /**
+   * Value of the terms inside one `[...]`, which may mix registers, labels and
+   * constants: `[BX+SI-2]`, `[DI-2]`, `[BP+4]`, `[DATA_W+HOWMANY*2]`.
+   */
+  private evalIndex(expr: string): number | null {
+    return evalExpr(expr, this.symbolLookup, 0, this.registerLookup);
+  }
+
+  private symbolLookup = (name: string): number | undefined => {
+    if (this.a.symbols[name] !== undefined) return this.a.symbols[name];
+    if (this.a.dataVars[name] !== undefined) return this.a.dataVars[name]!.addr;
+    if (this.a.labels[name] !== undefined) return this.a.labels[name];
+    return undefined;
+  };
+
+  private registerLookup = (name: string): number | undefined =>
+    this.isReg16(name) ? this.reg[name] : undefined;
 
   varUnitSize(token: string): 1 | 2 {
     if (/^byte\s+ptr/i.test(token)) return 1;
@@ -133,14 +167,20 @@ export class Machine {
     const t = token.replace(/^(byte|word)\s+ptr\s+/i, "").trim();
     const m = t.match(/^(\w+)/);
     if (m && this.a.dataVars[m[1].toLowerCase()]) {
-      return this.a.dataVars[m[1].toLowerCase()].unitSize;
+      return this.a.dataVars[m[1].toLowerCase()]!.unitSize;
     }
     return 2;
   }
 
   isMemOperand(token: string): boolean {
     const low = token.toLowerCase();
-    return token.includes("[") || this.a.dataVars[low] !== undefined;
+    if (token.includes("[")) return true;
+    if (this.a.dataVars[low] !== undefined) return true;
+    const stripped = low.replace(/^(byte|word)\s+ptr\s+/, "").trim();
+    if (stripped !== low && this.a.dataVars[stripped] !== undefined) return true;
+    // `SEEN+2` and friends: a data label plus a displacement, no brackets.
+    const bare = stripped.match(/^(\w+)([\s+-].*)$/);
+    return bare !== null && this.a.dataVars[bare[1]!] !== undefined;
   }
 
   readOperand(token: string, sizeHint?: 1 | 2): number {
@@ -150,11 +190,34 @@ export class Machine {
     if (this.isReg16(low)) return this.reg[low];
     if (low === "@data") return 0;
     const num = parseNumber(token);
-    if (num !== null) return num;
+    if (num !== null) {
+      // A defined name wins over a number, and a name is only ever read as a
+      // number when it ends in a radix letter: EACH is four, not 0xEAC. The
+      // symbol table is consulted for those alone, which keeps it off the path
+      // every immediate and register operand takes.
+      if (endsWithRadixLetter(token)) {
+        const constant = this.a.symbols[low];
+        if (constant !== undefined) return constant;
+      }
+      return num;
+    }
+    if (this.a.symbols[low] !== undefined) return this.a.symbols[low];
     if (/^offset\s+/i.test(token)) {
       const name = token.replace(/^offset\s+/i, "").trim().toLowerCase();
       if (this.a.dataVars[name]) return this.a.dataVars[name].addr;
+      if (this.a.symbols[name] !== undefined) return this.a.symbols[name];
+      // The offset of a routine is where it sits in the instruction list.
+      if (this.a.labels[name] !== undefined) return this.a.labels[name];
       throw new AsmError(`Unknown symbol "${name}"`);
+    }
+    // A bare name that is not a constant is a data label, an address to read
+    // through rather than a value.
+    if (low === "data" || low === "code" || low === "datasg" || low === "codesg") {
+      return 0;
+    }
+    if (low.startsWith("seg ")) {
+      // The flat memory model has one segment, so every segment value is 0.
+      return 0;
     }
     if (this.isMemOperand(low)) {
       const addr = this.resolveMemOperand(token);
@@ -163,7 +226,14 @@ export class Machine {
       if (size === 2) return this.mem[addr] | (this.mem[addr + 1] << 8);
       return this.mem[addr];
     }
+    const expr = this.evalConst(token);
+    if (expr !== null) return expr;
     throw new AsmError(`Cannot read operand "${token}"`);
+  }
+
+  /** Constant expression over EQU symbols, data labels and code labels. */
+  private evalConst(token: string): number | null {
+    return evalExpr(token, this.symbolLookup);
   }
 
   writeOperand(token: string, val: number, sizeHint?: 1 | 2): void {
@@ -246,6 +316,40 @@ export class Machine {
     return 2;
   }
 
+  /**
+   * Effective shift/rotate count.
+   *
+   * The 8086 takes the low five bits of the count, which is 0 to 31, and a
+   * count of zero leaves the operand and every flag alone. What happens past
+   * one pass differs by instruction:
+   *
+   * - A shift keeps going: shifting a word by sixteen leaves it zero, and the
+   *   carry holds the last bit to leave, which is bit 0. `SAR` fills with the
+   *   sign instead and the carry ends as the sign.
+   * - A rotate comes full circle, so a count of one width is a no-op on the
+   *   value and still updates the carry.
+   * - A rotate through carry turns a value plus the carry, so its cycle is one
+   *   wider than the operand: nine steps for a byte, seventeen for a word.
+   */
+  private shiftCount(token: string, size: 1 | 2, kind: "shift" | "rotate" | "rotate-carry"): number {
+    const raw = this.readOperand(token) & 0x1f;
+    if (raw === 0) return 0;
+    const bits = size * 8;
+    if (kind === "shift") return Math.min(raw, bits);
+    return raw % (kind === "rotate-carry" ? bits + 1 : bits);
+  }
+
+  /**
+   * True when a jump or call target is a value rather than a label name: a
+   * bracketed address, a bare data label, or a register.
+   */
+  private isIndirectTarget(token: string): boolean {
+    const low = token.trim().toLowerCase();
+    if (low.includes("[") || this.isReg16(low) || this.isReg8(low)) return true;
+    if (this.a.labels[low] !== undefined) return false;
+    return this.isMemOperand(low);
+  }
+
   getCurrentLine(): number | null {
     if (this.halted || this.ip >= this.a.instrs.length) return null;
     return this.a.instrs[this.ip]?.ln ?? null;
@@ -300,6 +404,7 @@ export class Machine {
       waitingForInput: this.waitingForInput,
       mem: new Uint8Array(this.mem),
       console: this.console.getState(),
+      ports: [...this.ports],
     };
   }
 
@@ -316,6 +421,7 @@ export class Machine {
     this.waitingForInput = s.waitingForInput;
     this.mem.set(s.mem);
     this.console.setState(s.console);
+    this.ports = new Map(s.ports);
   }
 
   /** Execute one instruction. Returns false when halted or errored. */
@@ -388,7 +494,15 @@ export class Machine {
       }
       case "lea": {
         const addr = this.resolveMemOperand(args[1]);
-        if (addr === null) throw new AsmError(`LEA needs memory operand`);
+        if (addr === null) {
+          // `LEA SI, BUFFER + 2` addresses a label plus a constant, which MASM
+          // allows without brackets. The address is the value, so it reduces to
+          // a constant expression.
+          const konst = this.evalConst(args[1]!);
+          if (konst === null) throw new AsmError(`LEA needs memory operand`);
+          this.writeOperand(args[0]!, konst);
+          break;
+        }
         this.writeOperand(args[0], addr);
         break;
       }
@@ -459,10 +573,41 @@ export class Machine {
         break;
       }
       case "imul": {
-        const b = this.readOperand(args[0]);
-        const r = ((this.reg.ax << 16) >> 16) * ((b << 16) >> 16);
-        this.reg.ax = r & 0xffff;
-        this.reg.dx = (r >> 16) & 0xffff;
+        if (args.length >= 2) {
+          // Two operands multiply into the destination: IMUL dest, src.
+          // Three ignore what the destination held: IMUL dest, src, imm.
+          const size = this.operandSize(args[0]);
+          const first =
+            args[2] !== undefined
+              ? this.readOperand(args[1], size)
+              : this.readOperand(args[0], size);
+          const second =
+            args[2] !== undefined
+              ? (parseNumber(args[2]) ?? this.readOperand(args[2], size))
+              : this.readOperand(args[1], size);
+          const r = signedValue(first, size) * signedValue(second, size);
+          this.writeOperand(args[0]!, r, size);
+          const fits = r === signedValue(r, size);
+          this.flags.CF = this.flags.OF = fits ? 0 : 1;
+          break;
+        }
+        // One-operand form: a byte multiplies AL into AX, a word multiplies AX
+        // into DX:AX. Both operands are signed, which is the whole difference
+        // from MUL.
+        const size = this.operandSize(args[0]);
+        const b = signedValue(this.readOperand(args[0], size), size);
+        const a = size === 1 ? signedValue(this.get8("al"), 1) : signedValue(this.reg.ax, 2);
+        const r = a * b;
+        if (size === 1) {
+          this.reg.ax = r & 0xffff;
+          const fits = r >= -128 && r <= 127;
+          this.flags.CF = this.flags.OF = fits ? 0 : 1;
+        } else {
+          this.reg.ax = r & 0xffff;
+          this.reg.dx = (r >> 16) & 0xffff;
+          const fits = r >= -32768 && r <= 32767;
+          this.flags.CF = this.flags.OF = fits ? 0 : 1;
+        }
         break;
       }
       case "div": {
@@ -563,50 +708,59 @@ export class Machine {
       case "shl": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "shift");
+        if (n === 0) break;
+        const bits = size * 8;
         const mask = size === 2 ? 0xffff : 0xff;
         const r = (a << n) & mask;
         this.writeOperand(args[0], r, size);
-        if (n > 0) this.flags.CF = (a >> (size * 8 - n)) & 1;
-        setLogicFlags(this.flags, r, size);
+        const carry = (a >> (bits - n)) & 1;
+        // OF is the old top bit against the bit that left, the one case where
+        // a shift is a signed operation.
+        const overflow = ((r >> (bits - 1)) & 1) ^ carry;
+        setShiftFlags(this.flags, r, size, carry, overflow);
         break;
       }
       case "sar": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "shift");
+        if (n === 0) break;
         const bits = size * 8;
         const signed = (a << (32 - bits)) >> (32 - bits);
         const r = (signed >> n) & (size === 2 ? 0xffff : 0xff);
         this.writeOperand(args[0], r, size);
-        if (n > 0) this.flags.CF = (signed >> (n - 1)) & 1;
-        setLogicFlags(this.flags, r, size);
+        const carry = (signed >> (n - 1)) & 1;
+        setShiftFlags(this.flags, r, size, carry, 0);
         break;
       }
       case "rol": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "rotate");
+        if (n === 0) break;
         const bits = size * 8;
-        const r = ((a << n) | (a >> (bits - n))) & (size === 2 ? 0xffff : 0xff);
+        const r = ((a << n) | (a >>> (bits - n))) & (size === 2 ? 0xffff : 0xff);
         this.writeOperand(args[0], r, size);
-        if (n > 0) this.flags.CF = r & 1;
+        this.flags.CF = r & 1;
         break;
       }
       case "ror": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "rotate");
+        if (n === 0) break;
         const bits = size * 8;
-        const r = ((a >> n) | (a << (bits - n))) & (size === 2 ? 0xffff : 0xff);
+        const r = ((a >>> n) | (a << (bits - n))) & (size === 2 ? 0xffff : 0xff);
         this.writeOperand(args[0], r, size);
-        if (n > 0) this.flags.CF = (r >> (bits - 1)) & 1;
+        this.flags.CF = (r >> (bits - 1)) & 1;
         break;
       }
       case "rcl": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "rotate-carry");
+        if (n === 0) break;
         const bits = size * 8;
         let val = a;
         let cf = this.flags.CF;
@@ -622,13 +776,14 @@ export class Machine {
       case "rcr": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "rotate-carry");
+        if (n === 0) break;
         const bits = size * 8;
         let val = a;
         let cf = this.flags.CF;
         for (let i = 0; i < n; i++) {
           const newCf = val & 1;
-          val = ((cf << (bits - 1)) | (val >> 1)) & (size === 2 ? 0xffff : 0xff);
+          val = ((cf << (bits - 1)) | (val >>> 1)) & (size === 2 ? 0xffff : 0xff);
           cf = newCf;
         }
         this.writeOperand(args[0], val, size);
@@ -638,11 +793,14 @@ export class Machine {
       case "shr": {
         const size = this.operandSize(args[0]);
         const a = this.readOperand(args[0], size);
-        const n = this.readOperand(args[1]) & 0x1f;
+        const n = this.shiftCount(args[1], size, "shift");
+        if (n === 0) break;
         const r = a >>> n;
         this.writeOperand(args[0], r & (size === 2 ? 0xffff : 0xff), size);
-        if (n > 0) this.flags.CF = (a >> (n - 1)) & 1;
-        setLogicFlags(this.flags, r, size);
+        const carry = (a >>> (n - 1)) & 1;
+        // The bit that entered the top is the old sign bit.
+        const overflow = size === 2 ? (a >> 15) & 1 : (a >> 7) & 1;
+        setShiftFlags(this.flags, r, size, carry, overflow);
         break;
       }
       case "aaa": {
@@ -667,30 +825,44 @@ export class Machine {
       }
       case "daa": {
         let al = this.get8("al");
+        // The carry the addition left is what the second test looks at, and
+        // what the instruction reports: DAA is what tells the next addition
+        // that the answer ran past a hundred.
+        let carry = this.flags.CF;
         if ((al & 0x0f) > 9 || this.flags.AF) {
           al = (al + 6) & 0xff;
           this.flags.AF = 1;
         }
-        if (al > 0x9f || this.flags.CF) {
+        if (al > 0x9f || carry) {
           al = (al + 0x60) & 0xff;
-          this.flags.CF = 1;
+          carry = 1;
         }
         this.set8("al", al);
-        setLogicFlags(this.flags, al, 1);
+        this.flags.ZF = al === 0 ? 1 : 0;
+        this.flags.SF = (al & 0x80) ? 1 : 0;
+        this.flags.PF = parityOf(al);
+        this.flags.CF = carry;
+        // Overflow is undefined after a decimal adjust, and is left as the
+        // addition set it.
         break;
       }
       case "das": {
-        let al = this.get8("al");
+        const before = this.get8("al");
+        let al = before;
+        let carry = this.flags.CF;
         if ((al & 0x0f) > 9 || this.flags.AF) {
           al = (al - 6) & 0xff;
           this.flags.AF = 1;
         }
-        if (this.get8("al") > 0x9f || this.flags.CF) {
+        if (before > 0x9f || carry) {
           al = (al - 0x60) & 0xff;
-          this.flags.CF = 1;
+          carry = 1;
         }
         this.set8("al", al);
-        setLogicFlags(this.flags, al, 1);
+        this.flags.ZF = al === 0 ? 1 : 0;
+        this.flags.SF = (al & 0x80) ? 1 : 0;
+        this.flags.PF = parityOf(al);
+        this.flags.CF = carry;
         break;
       }
       case "aam": {
@@ -740,12 +912,19 @@ export class Machine {
       case "lock":
         break;
       case "in": {
-        // Port I/O stub — returns 0
-        this.writeOperand(args[0], 0);
+        // The port space is a latch: whatever a program wrote to a port reads
+        // back from it, which is what lets an OUT/IN pair be followed. Ports
+        // with a device behind them in a real machine are not emulated.
+        const port = this.readOperand(args[1]) & 0xffff;
+        this.writeOperand(args[0], this.ports.get(port) ?? 0);
         break;
       }
-      case "out":
+      case "out": {
+        const port = this.readOperand(args[0]) & 0xffff;
+        const size = this.operandSize(args[1]);
+        this.ports.set(port, this.readOperand(args[1], size) & (size === 2 ? 0xffff : 0xff));
         break;
+      }
       case "cbw": {
         const al = this.get8("al");
         this.reg.ax = al >= 0x80 ? 0xff00 | al : al;
@@ -770,7 +949,8 @@ export class Machine {
         this.flags.DF = 1;
         break;
       case "lahf":
-        this.reg.ax = (this.reg.ax & 0xff00) | (flagsToWord(this.flags) & 0xff);
+        // LAHF loads AH, not AL, with SF ZF AF PF CF in that order.
+        this.reg.ax = (this.reg.ax & 0x00ff) | ((flagsToWord(this.flags) & 0xff) << 8);
         break;
       case "sahf": {
         const low = this.get8("ah");
@@ -779,7 +959,7 @@ export class Machine {
         break;
       }
       case "pushf": {
-        const v = flagsToWord(this.flags);
+        const v = pushfWord(this.flags);
         this.reg.sp -= 2;
         writeUnit(this.mem, this.reg.sp, v, 2);
         this.pushData(v);
@@ -807,6 +987,12 @@ export class Machine {
         break;
       }
       case "jmp":
+        // `JMP [BX]` and `JMP BX` jump through a word held in memory or in a
+        // register, which is how a dispatch table is indexed.
+        if (this.isIndirectTarget(args[0]!)) {
+          this.ip = this.readOperand(args[0]!, 2);
+          return this.ip;
+        }
         this.jumpTo(args[0]);
         return this.ip;
       case "je":
@@ -948,16 +1134,44 @@ export class Machine {
           return this.ip;
         }
         break;
-      case "call":
+      case "call": {
+        // The destination is settled first: a call that cannot be made must
+        // leave the stack exactly as it found it.
+        const indirect = this.isIndirectTarget(args[0]!);
+        const target = indirect
+          ? this.readOperand(args[0]!, 2)
+          : (this.a.labels[args[0]!.trim().toLowerCase()] ?? -1);
+        if (target < 0) this.jumpTo(args[0]!); // throws the usual unknown-label error
+        // The return address goes on the memory stack, because that is where a
+        // procedure expects to find it: [BP+2] inside a `PUSH BP / MOV BP, SP`
+        // frame, and where `RET n` measures the frame from. The call stack is
+        // the display mirror of the same return.
+        this.reg.sp -= 2;
+        writeUnit(this.mem, this.reg.sp, this.ip + 1, 2);
+        this.pushData(this.ip + 1);
         this.pushCall(this.ip + 1, instr.ln);
-        this.jumpTo(args[0]);
+        this.ip = target;
         return this.ip;
+      }
       case "ret":
+      case "iret": {
+        // `INT` pushes nothing in this flat model, so `IRET` is the same
+        // return as `RET`. Both read the destination off the memory stack and
+        // keep the call stack as its mirror; `RET n` also drops n bytes of
+        // arguments the caller left behind.
         if (this.callStack.length === 0) {
           this.halted = true;
           return false;
         }
-        return this.callStack.pop()!;
+        const extra = args[0]
+          ? (parseNumber(args[0]) ?? this.evalConst(args[0]) ?? 0)
+          : 0;
+        const target = this.mem[this.reg.sp] | (this.mem[this.reg.sp + 1] << 8);
+        this.reg.sp += 2 + extra;
+        if (this.dataStack.length) this.dataStack.pop();
+        this.callStack.pop();
+        return target;
+      }
       case "nop":
         break;
       case "movsb":
@@ -989,6 +1203,27 @@ export class Machine {
           readInputChar: () => this.readInputChar(),
           peekInputChar: () => this.peekInputChar(),
           waitingForInput: this.waitingForInput,
+          setCF: (v: number) => {
+            this.flags.CF = v ? 1 : 0;
+          },
+          setZF: (v: number) => {
+            this.flags.ZF = v ? 1 : 0;
+          },
+          getCursor: () => ({
+            row: this.console.cursorRow,
+            col: this.console.cursorCol,
+          }),
+          setCursor: (row: number, col: number) => {
+            this.console.setCursor(row, col);
+          },
+          clearScreen: () => {
+            this.console.clear();
+          },
+          getVideoMode: () => this.videoMode,
+          setVideoMode: (mode: number) => {
+            this.videoMode = mode;
+          },
+          files: this.files,
         };
         const result = handleInterrupt(n, ctx);
         this.waitingForInput = ctx.waitingForInput;
@@ -998,19 +1233,17 @@ export class Machine {
         }
         if (result.waitForInput) return this.ip;
         if (!result.handled) {
-          throw new AsmError(`Unsupported interrupt 0x${n.toString(16)}`, instr.ln);
+          const service = this.get8("ah").toString(16).toUpperCase().padStart(2, "0");
+          throw new AsmError(
+            `Unsupported INT ${n.toString(16).toUpperCase()}h service ${service}h`,
+            instr.ln,
+          );
         }
         break;
       }
       case "into":
         if (this.flags.OF) throw new AsmError("INTO: overflow trap");
         break;
-      case "iret":
-        if (this.callStack.length === 0) {
-          this.halted = true;
-          return false;
-        }
-        return this.callStack.pop()!;
       default:
         throw new AsmError(`Unsupported instruction "${op.toUpperCase()}"`, instr.ln);
     }
@@ -1104,6 +1337,30 @@ export class Machine {
 
     return this.ip + 1;
   }
+}
+
+/** True when a token ends in one of the radix letters `parseNumber` accepts. */
+function endsWithRadixLetter(token: string): boolean {
+  switch (token.charCodeAt(token.length - 1)) {
+    case 0x62: // b
+    case 0x42: // B
+    case 0x64: // d
+    case 0x44: // D
+    case 0x68: // h
+    case 0x48: // H
+    case 0x6f: // o
+    case 0x4f: // O
+    case 0x71: // q
+    case 0x51: // Q
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Reinterpret a value of the given width as two's complement. */
+function signedValue(v: number, size: 1 | 2): number {
+  return size === 1 ? (v << 24) >> 24 : (v << 16) >> 16;
 }
 
 export function createMachine(assembled: AssembledProgram): Machine {

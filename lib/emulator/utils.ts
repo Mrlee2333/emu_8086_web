@@ -24,6 +24,7 @@ export function parseNumber(tok: string): number | null {
   if (/^0x[0-9a-f]+$/i.test(tok)) return parseInt(tok, 16);
   if (/^[0-9a-f]+h$/i.test(tok)) return parseInt(tok.slice(0, -1), 16);
   if (/^[0-9]+d$/i.test(tok)) return parseInt(tok.slice(0, -1), 10);
+  if (/^[0-7]+[oq]$/i.test(tok)) return parseInt(tok.slice(0, -1), 8);
   if (/^[01]+b$/i.test(tok)) return parseInt(tok.slice(0, -1), 2);
   return null;
 }
