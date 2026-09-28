@@ -23,9 +23,12 @@ const path = require("node:path");
 const { portCandidates } = require("./port-candidates");
 const {
   autoUpdateEnabled,
+  bundlePathFrom,
   installBlocked,
   parseSignature,
   shouldCheckInBackground,
+  updateActionFor,
+  updatePromptButtons,
 } = require("./update-pref");
 
 const APP_NAME = "emu8086web";
@@ -37,9 +40,11 @@ const HEALTH_PATH = "/api/health";
 const START_TIMEOUT_MS = 30000;
 const POLL_INTERVAL_MS = 250;
 const UPDATE_CHECK_DELAY_MS = 15000;
-const UPDATE_BTN_RESTART = 0;
+// Only the "Later" index is named, and it is the default *and* the cancel
+// button. The other two positions are resolved by label in `updateActionFor`,
+// because an index constant that did not match the button array once made the
+// download fallback unreachable.
 const UPDATE_BTN_LATER = 1;
-const UPDATE_BTN_DOWNLOAD = 2;
 
 let serverChild = null;
 let mainWindow = null;
@@ -223,9 +228,18 @@ function probeAppSignature() {
       resolve(null);
       return;
     }
+    // `app.getPath("appPath")` is not a thing — it throws
+    // "Failed to get 'appPath' path", which meant this probe always failed and
+    // the signature feature never engaged. `bundlePathFrom` derives the bundle
+    // from resourcesPath instead, and is unit-tested against a real .app.
+    const bundle = bundlePathFrom(process.resourcesPath);
+    if (!bundle) {
+      resolve(null);
+      return;
+    }
     execFile(
       "/usr/bin/codesign",
-      ["-dv", app.getPath("appPath")],
+      ["-dv", bundle],
       { timeout: 5000 },
       (err, stdout, stderr) => {
         if (err) {
@@ -270,16 +284,12 @@ function setupAutoUpdater() {
     const blocked = installBlocked({
       isMac: process.platform === "darwin",
       isPackaged: isPackaged(),
-      appPath: isPackaged() ? app.getPath("appPath") : null,
       signature: appSignature,
     });
-    const buttons = blocked
-      ? ["Download the update", "Later"]
-      : ["Restart now", "Later"];
     dialog
       .showMessageBox(focusedWindow(), {
         type: "info",
-        buttons,
+        buttons: updatePromptButtons(blocked),
         defaultId: UPDATE_BTN_LATER,
         cancelId: UPDATE_BTN_LATER,
         title: "Update ready",
@@ -291,23 +301,21 @@ function setupAutoUpdater() {
           : undefined,
       })
       .then(({ response }) => {
-        if (blocked && response === UPDATE_BTN_DOWNLOAD) {
+        // By label, not by index: an index constant that did not match the
+        // button array made the download fallback a dead button, which is the
+        // very defect this prompt was written to fix.
+        const action = updateActionFor(blocked, response);
+        if (action === "download") {
           void shell.openExternal(RELEASES_URL);
-        } else if (!blocked && response === UPDATE_BTN_RESTART) {
+        } else if (action === "install") {
           updater.quitAndInstall();
         }
       });
   });
   updater.on("error", (err) => {
     // Previously an empty handler, which is why a failed install looked like a
-    // dead button. Only surfaced when the user asked to check.
-    if (manualCheckPending) {
-      manualCheckPending = false;
-      showUpdateError(
-        focusedWindow(),
-        `Update check failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // dead button. Only surfaced when the user asked for the check.
+    reportManualCheckError(err);
     console.error("[updater]", err);
   });
   setTimeout(() => {
@@ -316,6 +324,22 @@ function setupAutoUpdater() {
     }
     updater.checkForUpdatesAndNotify().catch(() => {});
   }, UPDATE_CHECK_DELAY_MS);
+}
+
+/**
+ * Show a failed manual check exactly once.
+ *
+ * `checkForUpdates` both emits `error` and rejects its promise, so handling
+ * both showed the user the same dialog twice. The flag is consumed by whichever
+ * arrives first, so the second one is quiet.
+ */
+function reportManualCheckError(err) {
+  if (!manualCheckPending) return;
+  manualCheckPending = false;
+  showUpdateError(
+    focusedWindow(),
+    `Update check failed: ${err instanceof Error ? err.message : String(err)}`,
+  );
 }
 
 /** Menu-driven check with explicit up-to-date / failure dialogs. */
@@ -353,11 +377,7 @@ function manualCheckForUpdates() {
       }
     },
     (err) => {
-      manualCheckPending = false;
-      showUpdateError(
-        focusedWindow(),
-        `Update check failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      reportManualCheckError(err);
     },
   );
 }
@@ -691,22 +711,20 @@ function registerFolderIpc() {
     const abs = await resolveSourceFile(rel);
     const st = await fs.stat(abs);
     if (!st.isFile()) throw new Error("Not a file");
-    if (st.size > MAX_FOLDER_FILE_BYTES) throw new Error("File too large (256 KiB cap)");
+    if (st.size > MAX_FOLDER_FILE_BYTES)
+      throw new Error("File too large (256 KiB cap)");
     return fs.readFile(abs, "utf8");
   });
 
-  handleTrusted(
-    "emu8086web:write-folder-file",
-    async (_e, rel, content) => {
-      if (typeof content !== "string") throw new Error("Invalid content");
-      if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
-        throw new Error("File too large (256 KiB cap)");
-      }
-      const abs = await resolveWritableFile(rel);
-      await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, content, "utf8");
-    },
-  );
+  handleTrusted("emu8086web:write-folder-file", async (_e, rel, content) => {
+    if (typeof content !== "string") throw new Error("Invalid content");
+    if (Buffer.byteLength(content, "utf8") > MAX_FOLDER_FILE_BYTES) {
+      throw new Error("File too large (256 KiB cap)");
+    }
+    const abs = await resolveWritableFile(rel);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, content, "utf8");
+  });
 
   handleTrusted(
     "emu8086web:create-folder-entry",
@@ -731,29 +749,32 @@ function registerFolderIpc() {
     },
   );
 
-  handleTrusted("emu8086web:rename-folder-entry", async (_e, oldRel, newRel) => {
-    if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
-      throw new Error("Invalid path");
-    }
-    if (!hasNoDotSegments(oldRel) || !hasNoDotSegments(newRel)) {
-      throw new Error("Invalid path");
-    }
-    const newLeaf = newRel.split(/[\\/]/).pop() || "";
-    if (newLeaf.includes(".") && !isListableFile(newLeaf)) {
-      throw new Error("Only .asm/.txt/.inc files");
-    }
-    const from = await resolveInside(oldRel);
-    const to = await resolveForWrite(newRel);
-    try {
-      await fs.access(to);
-      throw new Error("Already exists");
-    } catch (err) {
-      if (err && err.message === "Already exists") throw err;
-      // ENOENT → target free, proceed.
-    }
-    await fs.mkdir(path.dirname(to), { recursive: true });
-    await fs.rename(from, to);
-  });
+  handleTrusted(
+    "emu8086web:rename-folder-entry",
+    async (_e, oldRel, newRel) => {
+      if (!isSafeRelPath(oldRel) || !isSafeRelPath(newRel)) {
+        throw new Error("Invalid path");
+      }
+      if (!hasNoDotSegments(oldRel) || !hasNoDotSegments(newRel)) {
+        throw new Error("Invalid path");
+      }
+      const newLeaf = newRel.split(/[\\/]/).pop() || "";
+      if (newLeaf.includes(".") && !isListableFile(newLeaf)) {
+        throw new Error("Only .asm/.txt/.inc files");
+      }
+      const from = await resolveInside(oldRel);
+      const to = await resolveForWrite(newRel);
+      try {
+        await fs.access(to);
+        throw new Error("Already exists");
+      } catch (err) {
+        if (err && err.message === "Already exists") throw err;
+        // ENOENT → target free, proceed.
+      }
+      await fs.mkdir(path.dirname(to), { recursive: true });
+      await fs.rename(from, to);
+    },
+  );
 
   handleTrusted("emu8086web:delete-folder-entry", async (_e, rel) => {
     if (!hasNoDotSegments(rel)) throw new Error("Invalid path");

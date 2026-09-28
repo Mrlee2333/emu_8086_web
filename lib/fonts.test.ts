@@ -17,8 +17,15 @@ const SCAN_DIRS = ["app", "components", "lib"];
 /** This file, which quotes the import in a fixture and would match itself. */
 const SELF = fileURLToPath(import.meta.url);
 
-/** An import of the Google Fonts loader, not a mention of it in prose. */
-const GOOGLE_FONT_IMPORT = /(?:from\s+|require\(\s*)["']next\/font\/google["']/;
+/**
+ * An import of the Google Fonts loader, not a mention of it in prose.
+ *
+ * `import(...)` with a literal specifier is statically analysable by the
+ * bundler, so a dynamic import would fetch at build time exactly like a static
+ * one. It is matched here for that reason.
+ */
+const GOOGLE_FONT_IMPORT =
+  /(?:from\s+|require\(\s*|import\(\s*)["']next\/font\/google["']/;
 
 /** Every source file the bundler could pick a font import up from. */
 function sourceFiles(dir: string): string[] {
@@ -55,24 +62,36 @@ describe("fonts are vendored", () => {
 
   it("would catch a reintroduced import, or this test proves nothing", () => {
     // A guard that cannot fail is decoration. The rule is matched against
-    // exactly the line layout.tsx used before the fonts were vendored.
-    const before = [
+    // exactly the line shapes the old import had, plus a dynamic import, which
+    // a bundler resolves statically and so would fetch just the same.
+    const staticForms = [
       'import { IBM_Plex_Sans } from "next/font/google";',
-      'import { VT323 } from "next/font/google";',
+      "import X from 'next/font/google';",
+      'const f = require("next/font/google");',
+      'const { VT323 } = await import("next/font/google");',
+      "await import('next/font/google')",
     ];
-    const requireForm = 'const f = require("next/font/google");';
-    const singleQuote = "import X from 'next/font/google';";
-    const prose = "// we used to use next/font/google for this";
-    assert.ok(GOOGLE_FONT_IMPORT.test(before[0]!));
-    assert.ok(GOOGLE_FONT_IMPORT.test(before[1]!));
-    assert.ok(GOOGLE_FONT_IMPORT.test(requireForm));
-    assert.ok(GOOGLE_FONT_IMPORT.test(singleQuote));
-    assert.ok(!GOOGLE_FONT_IMPORT.test(prose), "prose is not an import");
+    for (const form of staticForms) {
+      assert.ok(GOOGLE_FONT_IMPORT.test(form), `missed: ${form}`);
+    }
+    // Prose is not an import, and neither is a different package.
+    const notImports = [
+      "// we used to use next/font/google for this",
+      "import { WOFF2 } from 'next/font/local'",
+      'const x = "next/font/google"',
+    ];
+    for (const form of notImports) {
+      assert.ok(!GOOGLE_FONT_IMPORT.test(form), `false positive: ${form}`);
+    }
   });
 
   it("declares the same three families and the same CSS variables", () => {
     const src = readFileSync(path.join(ROOT, "lib", "fonts.ts"), "utf8");
-    for (const family of ["IBMPlexSans-Variable", "IBMPlexMono-Regular", "VT323-Regular"]) {
+    for (const family of [
+      "IBMPlexSans-Variable",
+      "IBMPlexMono-Regular",
+      "VT323-Regular",
+    ]) {
       assert.ok(src.includes(family), `${family} is not referenced`);
     }
     for (const variable of [

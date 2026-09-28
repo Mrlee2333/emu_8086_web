@@ -32,7 +32,10 @@ describe("portCandidates", () => {
 
   it("always offers at least one stable port before falling back", () => {
     const stable = portCandidates(undefined).filter(isStablePort);
-    assert.ok(stable.length > 0, "nothing stable to try means settings are lost");
+    assert.ok(
+      stable.length > 0,
+      "nothing stable to try means settings are lost",
+    );
   });
 
   it("honours an explicit PORT first, so dev and CI can pin it", () => {

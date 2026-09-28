@@ -239,10 +239,24 @@ describe("restoreMirroredPrefs", () => {
 
   it("skips a stored empty string, which is not a value", async () => {
     const store = stubStorage();
-    stubBridge({ getSettings: { AUTO_UPDATE_KEY: "" } });
+    // Computed, not literal: `{ AUTO_UPDATE_KEY: "" }` would set a property
+    // named "AUTO_UPDATE_KEY" rather than the preference's real key, and the
+    // test would pass without the skip ever running.
+    stubBridge({ getSettings: { [AUTO_UPDATE_KEY]: "" } });
     const restored = await restoreMirroredPrefs();
     assert.deepEqual(restored, []);
     assert.equal(store.has(AUTO_UPDATE_KEY), false);
+  });
+
+  it("restores a key that holds a real value, so the skip is not skipping all", () => {
+    // The counterpart to the test above, because "returns nothing" passes
+    // equally well if nothing is ever restored.
+    const store = stubStorage();
+    stubBridge({ getSettings: { [AUTO_UPDATE_KEY]: "0" } });
+    return restoreMirroredPrefs().then((restored) => {
+      assert.deepEqual(restored, [AUTO_UPDATE_KEY]);
+      assert.equal(store.get(AUTO_UPDATE_KEY), "0");
+    });
   });
 
   it("returns nothing in the browser", async () => {

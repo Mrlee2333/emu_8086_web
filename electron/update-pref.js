@@ -88,6 +88,49 @@ function parseSignature(output) {
 }
 
 /**
+ * The `.app` bundle, from `process.resourcesPath`.
+ *
+ * `app.getPath("appPath")` does not exist — Electron's `getPath` throws
+ * `Failed to get 'appPath' path` for that name, so the signature probe
+ * silently never engaged and the whole feature was dead on packaged macOS.
+ * `resourcesPath` is `<bundle>/Contents/Resources`, so the bundle is two levels
+ * up. Pure, and tested against a real ad-hoc-signed `.app`, because getting
+ * this wrong produces no error — only a feature that never turns on.
+ *
+ * @param {unknown} resourcesPath anything at all, including the non-strings a
+ *   caller might hand it; nothing here may throw
+ * @returns {string | null} null when the input is not a Resources path
+ */
+function bundlePathFrom(resourcesPath) {
+  if (typeof resourcesPath !== "string" || resourcesPath === "") return null;
+  // Normalise the separator and drop a trailing slash *before* splitting, so
+  // ".../Contents/Resources/" does not yield a phantom empty final segment and
+  // then walk up one directory too few.
+  const posix = resourcesPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  // Must end in Contents/Resources, else the path is not what we think it is.
+  if (!/\/Contents\/Resources$/.test(posix)) return null;
+  return pathResolve(posix, "..", "..");
+}
+
+/**
+ * `path.resolve` without requiring `node:path` at module scope, so this file
+ * stays importable by a test that has no Electron runtime.
+ *
+ * @param {string} from
+ * @param {...string} rest
+ * @returns {string}
+ */
+function pathResolve(from, ...rest) {
+  const parts = from.replace(/\\/g, "/").split("/");
+  for (const part of rest) {
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  const joined = parts.filter((p, i) => p !== "" || i === 0).join("/");
+  return joined.startsWith("/") ? joined : `/${joined}`;
+}
+
+/**
  * True when an in-place install cannot be trusted to work, so the app should
  * offer a download rather than a restart.
  *
@@ -96,16 +139,51 @@ function parseSignature(output) {
  * is not treated as blocked — refusing to update on a guess would be worse
  * than trying.
  *
- * @param {{ isMac: boolean, appPath: string | null, signature: ReturnType<typeof parseSignature> | null, isPackaged: boolean }} input
+ * The bar is a **Developer ID Application** signature, not merely "not ad-hoc".
+ * A Development-signed build carries a real identity, but it is a different
+ * identity from the published artifact and the one in /Applications, so Squirrel
+ * would still refuse to replace it in place — the same failure, one step
+ * further along. Only a Developer ID Application signature matches what the
+ * release pipeline produces.
+ *
+ * @param {{ isMac: boolean, signature: ReturnType<typeof parseSignature> | null, isPackaged: boolean }} input
  * @returns {boolean}
  */
 function installBlocked(input) {
   if (!input.isMac) return false;
   if (!input.isPackaged) return false;
   if (!input.signature) return false;
-  // A Developer ID signature is a real identity, and a notarized one is what
-  // makes an in-place update reliable. Ad-hoc is the case that breaks.
-  return input.signature.adhoc;
+  const authority = input.signature.authority || "";
+  return !/^Developer ID Application:/.test(authority);
+}
+
+/**
+ * The buttons of the ready-to-install prompt.
+ *
+ * @param {boolean} blocked true when an in-place install cannot work
+ * @returns {string[]}
+ */
+function updatePromptButtons(blocked) {
+  return blocked ? ["Download the update", "Later"] : ["Restart now", "Later"];
+}
+
+/**
+ * What the user chose in the ready-to-install prompt.
+ *
+ * Resolved by **label, not by button index**. This was `response === 2` against
+ * a two-button array whose indices are 0 and 1, so the download button was
+ * dead — the same class of defect as the one it was written to fix. Matching on
+ * the label cannot drift when a button is added, removed or reordered, which
+ * is the only way this bug happens.
+ *
+ * @param {boolean} blocked
+ * @param {number} response index the dialog returned
+ * @returns {"download" | "install" | "none"}
+ */
+function updateActionFor(blocked, response) {
+  const label = updatePromptButtons(blocked)[response];
+  if (blocked) return label === "Download the update" ? "download" : "none";
+  return label === "Restart now" ? "install" : "none";
 }
 
 /**
@@ -124,5 +202,8 @@ module.exports = {
   autoUpdateEnabled,
   parseSignature,
   installBlocked,
+  bundlePathFrom,
+  updatePromptButtons,
+  updateActionFor,
   shouldCheckInBackground,
 };

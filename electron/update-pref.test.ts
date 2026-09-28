@@ -12,9 +12,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   autoUpdateEnabled,
+  bundlePathFrom,
   installBlocked,
   parseSignature,
   shouldCheckInBackground,
+  updateActionFor,
+  updatePromptButtons,
 } from "./update-pref.js";
 
 /** What `codesign -dv` prints for the two states that matter. */
@@ -72,7 +75,7 @@ describe("parseSignature", () => {
 });
 
 describe("installBlocked", () => {
-  const mac = { isMac: true, isPackaged: true, appPath: "/Applications/x.app" };
+  const mac = { isMac: true, isPackaged: true };
 
   it("blocks an in-place install from an ad-hoc build", () => {
     // The reported bug: this build shipped ad-hoc, ShipIt refused, and the
@@ -83,10 +86,36 @@ describe("installBlocked", () => {
     );
   });
 
-  it("allows an in-place install from a Developer ID build", () => {
+  it("blocks a Development-signed build too, not just ad-hoc", () => {
+    // A Development certificate is a real identity, but it is not the identity
+    // the release pipeline publishes, and not the one in /Applications either.
+    // Squirrel would refuse it in exactly the same way, so allowing "Restart
+    // now" here would reproduce the dead button one step further along.
+    assert.equal(
+      installBlocked({ ...mac, signature: parseSignature(DEVELOPMENT) }),
+      true,
+      "a Development signature cannot replace the published artifact in place",
+    );
+  });
+
+  it("allows an in-place install from a Developer ID Application build", () => {
     assert.equal(
       installBlocked({ ...mac, signature: parseSignature(DEVELOPER_ID) }),
       false,
+    );
+  });
+
+  it("does not treat a Developer ID *Certificate* as an Application signature", () => {
+    // The distinction matters: only the Application identity signs the app
+    // bundle. A second "Authority=Developer ID Certification Authority" line
+    // is the CA chain, not the signer.
+    const caOnly = `Authority=Developer ID Certification Authority
+TeamIdentifier=not set
+Signature=821a
+`;
+    assert.equal(
+      installBlocked({ ...mac, signature: parseSignature(caOnly) }),
+      true,
     );
   });
 
@@ -98,7 +127,6 @@ describe("installBlocked", () => {
         installBlocked({
           isMac: false,
           isPackaged: true,
-          appPath: "C:\\x.exe",
           signature: parseSignature(sig),
         }),
         false,
@@ -108,7 +136,11 @@ describe("installBlocked", () => {
 
   it("never blocks in dev, where there is nothing installed", () => {
     assert.equal(
-      installBlocked({ ...mac, isPackaged: false, signature: parseSignature(ADHOC) }),
+      installBlocked({
+        ...mac,
+        isPackaged: false,
+        signature: parseSignature(ADHOC),
+      }),
       false,
     );
   });
@@ -116,6 +148,126 @@ describe("installBlocked", () => {
   it("does not block on an unknown signature", () => {
     // Refusing to update on a guess is worse than trying.
     assert.equal(installBlocked({ ...mac, signature: null }), false);
+  });
+});
+
+describe("bundlePathFrom", () => {
+  it("finds the .app bundle from a real resourcesPath", () => {
+    // Captured from an actual Electron launch, not invented.
+    assert.equal(
+      bundlePathFrom("/Applications/emu8086web.app/Contents/Resources"),
+      "/Applications/emu8086web.app",
+    );
+  });
+
+  it("copes with a trailing slash and with a spaced path", () => {
+    assert.equal(
+      bundlePathFrom("/Users/a/Library/Caches/App.app/Contents/Resources/"),
+      "/Users/a/Library/Caches/App.app",
+    );
+    assert.equal(
+      bundlePathFrom("/Users/na/My Apps/emu8086web.app/Contents/Resources"),
+      "/Users/na/My Apps/emu8086web.app",
+    );
+  });
+
+  it("returns null rather than a wrong path for anything else", () => {
+    // The bug this replaced, `app.getPath("appPath")`, threw an exception
+    // instead — and the probe swallowed it, so the feature was simply never on.
+    for (const bad of [
+      "",
+      undefined,
+      null,
+      42,
+      "/Applications/emu8086web.app",
+      "/Applications/emu8086web.app/Contents",
+      "/Applications/emu8086web.app/Contents/MacOS",
+      "/tmp/Resources",
+    ]) {
+      assert.equal(
+        bundlePathFrom(bad),
+        null,
+        `${String(bad)} must not be guessed at`,
+      );
+    }
+  });
+
+  it("never returns a path that still contains Contents/Resources", () => {
+    // The exact shape that made the original probe useless.
+    const out = bundlePathFrom("/x/y.app/Contents/Resources");
+    assert.ok(out);
+    assert.ok(!out.includes("Contents/Resources"), out);
+    assert.ok(out.endsWith(".app"), out);
+  });
+});
+
+describe("updateActionFor", () => {
+  it("opens the download when the install is blocked", () => {
+    const buttons = updatePromptButtons(true);
+    for (let i = 0; i < buttons.length; i++) {
+      assert.equal(
+        updateActionFor(true, i),
+        buttons[i] === "Later" ? "none" : "download",
+        `response ${i} of the blocked dialog`,
+      );
+    }
+  });
+
+  it("installs on restart when the install is allowed", () => {
+    const buttons = updatePromptButtons(false);
+    for (let i = 0; i < buttons.length; i++) {
+      assert.equal(
+        updateActionFor(false, i),
+        buttons[i] === "Later" ? "none" : "install",
+        `response ${i} of the allowed dialog`,
+      );
+    }
+  });
+
+  it("would have caught the dead download button", () => {
+    // The shipped bug: `response === 2` against a two-button array, so the one
+    // index the dialog can never return was the only one handled. The test is
+    // that the actionable button sits at an index the dialog actually returns,
+    // and that no such index is past the end of the array.
+    for (const blocked of [true, false]) {
+      const buttons = updatePromptButtons(blocked);
+      const action = blocked ? "Download the update" : "Restart now";
+      const index = buttons.indexOf(action);
+      assert.ok(index >= 0, `${action} is not a button at all`);
+      assert.ok(
+        index < buttons.length,
+        `${action} is at an index the dialog can never return`,
+      );
+      assert.notEqual(updateActionFor(blocked, index), "none");
+      // And the other button is a deliberate no-op, not a dead end.
+      const other = buttons.findIndex((b) => b !== action);
+      assert.equal(updateActionFor(blocked, other), "none", "Later defers");
+    }
+  });
+
+  it("has no unreachable action, whatever the button order", () => {
+    // Positions are not load-bearing, so this holds even if the array is
+    // reordered or a button inserted.
+    for (const blocked of [true, false]) {
+      const buttons = updatePromptButtons(blocked);
+      const reachable = new Set(
+        buttons.map((_, i) => updateActionFor(blocked, i)),
+      );
+      const wanted = blocked ? "download" : "install";
+      assert.ok(reachable.has(wanted), `${wanted} is unreachable`);
+    }
+  });
+
+  it("does nothing for a response the dialog cannot return", () => {
+    assert.equal(updateActionFor(true, 99), "none");
+    assert.equal(updateActionFor(false, -1), "none");
+  });
+
+  it("cannot go wrong if a button is added or reordered", () => {
+    // The whole point of matching on the label: positions are not load-bearing.
+    const buttons = updatePromptButtons(true);
+    const downloadIndex = buttons.indexOf("Download the update");
+    assert.equal(updateActionFor(true, downloadIndex), "download");
   });
 });
 
