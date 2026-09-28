@@ -11,7 +11,7 @@ All notable changes to emu8086web are documented in this file.
 
 ### Added
 
-- **Extended value viewer** — the original emu8086 window, rebuilt in this app's own theme. One register in hex, binary and octal, then its high byte and low byte read on their own as unsigned decimal, signed decimal and a character, then the whole word as unsigned and signed. The 8086's "Watch" dropdown is kept, so one window covers all thirteen registers rather than thirteen copies of the same table
+- **Extended value viewer** — the original emu8086 window, rebuilt in this app's own theme. The two bytes of one register are shown in hex, binary and octal, each read on its own as unsigned decimal, signed decimal and a character; the register itself is shown in hex and binary, and read as unsigned and signed. It splits by width rather than by base, because that is the thing worth showing: octal stops at the byte, which is the width it is any use at, and a six-digit octal word is a number nobody computes by hand. The 8086's "Watch" dropdown is kept, so one window covers all thirteen registers rather than thirteen copies of the same table
 - **Two ways in.** An "Extended value" button in the CPU registers panel header opens it on AX, and an `i` on every row of the Details table opens it on *that* register. A row is the one place all thirteen registers are named at once, which is where the wish to explain one of them in full actually arises
 - **A register with no halves says so.** SI, DI, BP, SP, the four segments and IP are 16-bit only, so the byte rows are left out and the 16-bit readings stay — a screen of six dashes is a screen of nothing, and a fabricated `AH` would name a register the CPU cannot read
 

@@ -8,11 +8,12 @@ import { DialogShell } from "@/components/ide/dialog-shell";
 /**
  * The Extended Value Viewer (v1.5.3) — the original emu8086 window.
  *
- * The register details show a value as hex and as decimal. This goes wider,
- * because a beginner has nowhere else to see that the byte in AH and the word
- * in AX are the same kind of number read at two widths: the same value in hex,
- * binary and octal, then each byte on its own as unsigned, signed and a
- * character, then the whole word as unsigned and signed.
+ * The register details show a value as hex and as decimal. This goes wider, and
+ * it splits by width rather than by base: the two bytes are in hex, binary and
+ * octal, each read on its own as unsigned, signed and a character, and the word
+ * is in hex and binary, read as unsigned and signed. Octal stops at the byte,
+ * as it does in the original — that is the width it is any use at, and a
+ * six-digit octal word is a number nobody computes by hand.
  *
  * The picker is the "Watch" dropdown of the original. It is why this is a
  * dialog and not a strip — one window that can be pointed at any register,
@@ -25,10 +26,17 @@ export function ValueViewer({
 }: {
   /** Every register, in the 8086's own order. */
   views: RegView[];
-  /** Which register to open on. */
+  /** Which register to open on. Read once, when the dialog mounts. */
   initial: string;
   onClose: () => void;
 }) {
+  // Read once, deliberately. The panel mounts this dialog only while it is open,
+  // so every open is a fresh mount and the picker starts on the register that
+  // was asked about. If a second entry point is ever added that can reach this
+  // dialog while it is open — a keyboard shortcut, say — `initial` would change
+  // under a mounted component and the picker would silently keep the old
+  // register, so that path needs a `key` on this element rather than a second
+  // piece of state.
   const [name, setName] = useState(initial);
   // A miss here means a name has drifted from `describeRegisters`, which is a
   // bug in the caller rather than a runtime state, and saying so beats a
@@ -49,7 +57,7 @@ export function ValueViewer({
       open
       onClose={onClose}
       title="Extended value viewer"
-      subtitle="One value in every base, and the two bytes it is made of."
+      subtitle="The two bytes of one register, and the register itself."
       panelClassName="max-w-md"
     >
       <div className="flex items-center gap-2">
@@ -63,6 +71,8 @@ export function ValueViewer({
           id="value-viewer-watch"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          title="Which register to read"
+          aria-label="Which register to read"
           className="min-w-0 flex-1 rounded border border-line bg-panel-2 px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-amber"
         >
           {views.map((v) => (
@@ -107,6 +117,7 @@ export function ValueViewer({
         {high && low ? (
           <>
             <ByteGroup
+              cols={cols}
               high={high}
               low={low}
               rows={[
@@ -116,6 +127,7 @@ export function ValueViewer({
               ]}
             />
             <ByteGroup
+              cols={cols}
               caption="Decimal 8 bit"
               high={high}
               low={low}
@@ -126,7 +138,7 @@ export function ValueViewer({
                   tone: "plain",
                 },
                 { label: "Signed", read: (b) => String(b.signed), tone: "plain" },
-                { label: "Char", read: (b) => b.char, tone: "char" },
+                { label: "Char", read: (b) => b.char, tone: "plain" },
               ]}
             />
           </>
@@ -154,7 +166,16 @@ export function ValueViewer({
   );
 }
 
-type Tone = "hex" | "plain" | "char";
+/**
+ * Green is the app's colour for a hex value — the compact register panel and
+ * the Details table both use it — so the HEX row keeps it and nothing else
+ * needs a colour of its own. An earlier cut also coloured the Char row amber;
+ * that is the accent this app uses for something you can act on, and a
+ * character is data, not an action. It was also the lowest-contrast cell in the
+ * table (4.25:1 in the light theme, against 4.35:1 for green and 4.97:1 for
+ * ink-dim), so the two mistakes were the same mistake.
+ */
+type Tone = "hex" | "plain";
 type ByteRow = { label: string; read: (b: ValueByte) => string; tone: Tone };
 
 function Caption({ cols, children }: { cols: number; children: string }) {
@@ -175,14 +196,18 @@ function Caption({ cols, children }: { cols: number; children: string }) {
  * One set of readings applied to both halves.
  *
  * The caption is optional because the original viewer groups only the decimal
- * ones; the three base columns sit directly under the H and L headings.
+ * ones; the three base columns sit directly under the H and L headings. `cols`
+ * is passed in rather than assumed, so a group can never be laid out against a
+ * column count the rest of the table does not have.
  */
 function ByteGroup({
+  cols,
   caption,
   high,
   low,
   rows,
 }: {
+  cols: number;
   caption?: string;
   high: ValueByte;
   low: ValueByte;
@@ -190,7 +215,7 @@ function ByteGroup({
 }) {
   return (
     <tbody>
-      {caption ? <Caption cols={3}>{caption}</Caption> : null}
+      {caption ? <Caption cols={cols}>{caption}</Caption> : null}
       {rows.map((row) => (
         <tr key={row.label} className="border-b border-line/40">
           <th
@@ -208,9 +233,11 @@ function ByteGroup({
 }
 
 function Cell({ tone, text }: { tone: Tone; text: string }) {
-  const colour =
-    tone === "char" ? "text-amber" : tone === "hex" ? "text-green" : "text-ink";
-  return <td className={`py-1 pr-2 ${colour}`}>{text}</td>;
+  return (
+    <td className={`py-1 pr-2 ${tone === "hex" ? "text-green" : "text-ink"}`}>
+      {text}
+    </td>
+  );
 }
 
 function WordRow({

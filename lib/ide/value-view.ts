@@ -2,11 +2,15 @@
  * The Extended Value Viewer (v1.5.3) — every reading of one 16-bit 8086 value.
  *
  * The v1.5.1 register details show a value as hex and as decimal. The original
- * emu8086 viewer goes wider: the same word in hex, binary and octal, then the
- * two bytes it is made of read as numbers in their own right, each of them
- * unsigned, signed and a character. That is the part a beginner cannot get
- * anywhere else, because the byte in AH and the word in AX are the same kind of
- * number read at two widths, and nothing else on screen says so.
+ * emu8086 viewer goes wider, and it splits by width rather than by base: the two
+ * bytes are shown in hex, binary and octal and read on their own as unsigned,
+ * signed and a character, while the word is shown as hex and binary and read as
+ * unsigned and signed. Octal stops at the byte because that is the width it was
+ * ever useful at — a six-digit octal word is a number nobody computes by hand —
+ * and the original groups the 16-bit rows under "Decimal 16 bit" for the same
+ * reason. That asymmetry is the point of the window: the byte in AH and the word
+ * in AX are the same kind of number read at two widths, and nothing else on
+ * screen says so.
  *
  * Every number here is copied out of the `RegView` the details view already
  * shows rather than re-derived from the raw value, so the high and low byte in
@@ -22,7 +26,11 @@ import type { RegByteView, RegView } from "@/lib/ide/reg-info";
 
 /** One 8-bit half, in every base the viewer shows. */
 export type ValueByte = {
-  /** "AH", "AL" — or "H" / "L" for a register the 8086 gives no name to. */
+  /**
+   * The name the 8086 gives this half: "AH", "AL", "BH", "BL", "CH", "CL",
+   * "DH", "DL". There is no "H" or "L" case — reg-info sets both halves or
+   * neither, and only for the four registers that have them.
+   */
   name: string;
   /** 0 to 255. */
   value: number;

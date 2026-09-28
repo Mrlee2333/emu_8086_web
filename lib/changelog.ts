@@ -11,7 +11,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: "1.5.3",
     date: "2026-09-28",
     highlights: [
-      "Extended value viewer: one register in hex, binary and octal, then its high and low byte read on their own as unsigned, signed and a character, then the whole word as unsigned and signed — the original emu8086 window, rebuilt in the app's own dark theme",
+      "Extended value viewer: the original emu8086 window, rebuilt in the app's own dark theme. The two bytes of one register are in hex, binary and octal, each read on its own as unsigned, signed and a character; the register itself is in hex and binary, and read as unsigned and signed. It splits by width rather than by base — octal stops at the byte, the width it is any use at",
       "Reached two ways: an 'Extended value' button in the CPU registers panel header, and an i on every row of the Details table, which opens the viewer on that register rather than the first one",
       "A 'Watch' dropdown in the viewer points it at any of the thirteen registers, so one window covers all of them instead of thirteen copies of the same table",
       "A register with no high and low byte — SI, DI, BP, SP, the segments and IP — shows only its 16-bit readings and says why, rather than six rows of dashes",
