@@ -20,10 +20,11 @@ const fs = require("node:fs/promises");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
-const { portCandidates } = require("./port-candidates");
+const { isStablePort, portCandidates } = require("./port-candidates");
 const {
   autoUpdateEnabled,
   bundlePathFrom,
+  CODESIGN_ARGS,
   installBlocked,
   parseSignature,
   shouldCheckInBackground,
@@ -51,10 +52,21 @@ let mainWindow = null;
 let updaterStarted = false;
 /** Persisted renderer preferences; the source of truth for auto-update. */
 let settings = {};
-/** Set once the app signature is known; null while it is still unknown. */
-let appSignature = null;
+/**
+ * The signature probe, as a promise.
+ *
+ * Held as a promise rather than only its result because the probe is fired
+ * without being awaited, and the update handler can run before codesign has
+ * answered. Treating "not known yet" as "not blocked" would offer the dead
+ * Restart button in exactly the first seconds it must not.
+ */
+let appSignatureProbe = Promise.resolve(null);
 /** True while a user-initiated check is in flight, so errors are shown. */
 let manualCheckPending = false;
+/** Handle for the deferred background check, so quitting can cancel it. */
+let backgroundCheckTimer = null;
+/** Set on quit: a background check firing on a dying process is pure waste. */
+let quitting = false;
 
 function isPackaged() {
   return app.isPackaged;
@@ -127,39 +139,50 @@ function startBundledServer() {
       `Bundled server not found at ${serverFile}. Run "bun run electron:build" first.`,
     );
   }
-  return pickPort().then(
-    (port) =>
-      new Promise((resolve, reject) => {
-        // ELECTRON_RUN_AS_NODE is load-bearing: a packaged Electron
-        // binary ignores a script argument as an entry point and would
-        // otherwise boot a SECOND COPY OF THIS APP (its own main.js),
-        // which spawns another copy, recursively, until the machine
-        // falls over. Node mode runs server.js as a plain script.
-        // Mirrors lib/electron/offline.ts buildServerChildEnv.
-        const env = {};
-        for (const [k, v] of Object.entries(process.env)) {
-          if (typeof v === "string") env[k] = v;
+  return pickPort().then((port) => {
+    // All four pinned ports busy means the OS handed out an ephemeral one,
+    // and an ephemeral port is a new origin — which is the bug this whole
+    // change exists to fix, reappearing with no signal. The scalar settings
+    // still survive via the mirror, but the open files and tabs do not, so
+    // it is worth saying out loud rather than failing silently.
+    if (!isStablePort(port)) {
+      console.warn(
+        `[${APP_NAME}] all pinned ports are busy; fell back to ephemeral ` +
+          `port ${port}. Storage is keyed by origin, so open files and tabs ` +
+          `will not persist across restarts until a pinned port is free.`,
+      );
+    }
+    return new Promise((resolve, reject) => {
+      // ELECTRON_RUN_AS_NODE is load-bearing: a packaged Electron
+      // binary ignores a script argument as an entry point and would
+      // otherwise boot a SECOND COPY OF THIS APP (its own main.js),
+      // which spawns another copy, recursively, until the machine
+      // falls over. Node mode runs server.js as a plain script.
+      // Mirrors lib/electron/offline.ts buildServerChildEnv.
+      const env = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (typeof v === "string") env[k] = v;
+      }
+      env.PORT = String(port);
+      env.HOSTNAME = "127.0.0.1";
+      env.ELECTRON_RUN_AS_NODE = "1";
+      const child = spawn(process.execPath, [serverFile], {
+        env,
+        stdio: "ignore",
+      });
+      serverChild = child;
+      child.once("error", (err) => reject(err));
+      child.once("exit", (code) => {
+        if (!mainWindow) {
+          reject(new Error(`Bundled server exited early (code ${code})`));
         }
-        env.PORT = String(port);
-        env.HOSTNAME = "127.0.0.1";
-        env.ELECTRON_RUN_AS_NODE = "1";
-        const child = spawn(process.execPath, [serverFile], {
-          env,
-          stdio: "ignore",
-        });
-        serverChild = child;
-        child.once("error", (err) => reject(err));
-        child.once("exit", (code) => {
-          if (!mainWindow) {
-            reject(new Error(`Bundled server exited early (code ${code})`));
-          }
-        });
-        waitForHealth(port).then(
-          () => resolve(`http://127.0.0.1:${port}`),
-          (err) => reject(err),
-        );
-      }),
-  );
+      });
+      waitForHealth(port).then(
+        () => resolve(`http://127.0.0.1:${port}`),
+        (err) => reject(err),
+      );
+    });
+  });
 }
 
 /** Poll /api/health until the server answers or the timeout elapses. */
@@ -239,7 +262,10 @@ function probeAppSignature() {
     }
     execFile(
       "/usr/bin/codesign",
-      ["-dv", bundle],
+      // The verbosity lives in the tested module, not here. It is load-bearing
+      // and was wrong once: -dv is verbosity 0 and prints no Authority= line,
+      // so every build looked ad-hoc and the whole feature was inverted.
+      [...CODESIGN_ARGS, bundle],
       { timeout: 5000 },
       (err, stdout, stderr) => {
         if (err) {
@@ -281,36 +307,41 @@ function setupAutoUpdater() {
 
   updater.on("update-downloaded", (info) => {
     const version = info && info.version ? String(info.version) : "new";
-    const blocked = installBlocked({
-      isMac: process.platform === "darwin",
-      isPackaged: isPackaged(),
-      signature: appSignature,
-    });
-    dialog
-      .showMessageBox(focusedWindow(), {
-        type: "info",
-        buttons: updatePromptButtons(blocked),
-        defaultId: UPDATE_BTN_LATER,
-        cancelId: UPDATE_BTN_LATER,
-        title: "Update ready",
-        message: blocked
-          ? `${APP_NAME} v${version} is ready, but this build is not signed with a Developer ID, so it cannot replace itself in place.`
-          : `${APP_NAME} v${version} downloaded. Restart to install?`,
-        detail: blocked
-          ? "Download the release and replace the app in /Applications."
-          : undefined,
-      })
-      .then(({ response }) => {
-        // By label, not by index: an index constant that did not match the
-        // button array made the download fallback a dead button, which is the
-        // very defect this prompt was written to fix.
-        const action = updateActionFor(blocked, response);
-        if (action === "download") {
-          void shell.openExternal(RELEASES_URL);
-        } else if (action === "install") {
-          updater.quitAndInstall();
-        }
+    // Wait for the signature before choosing the buttons. A null signature
+    // means "not blocked", so deciding early would put a Restart button in
+    // front of a user whose build cannot perform one.
+    appSignatureProbe.then((signature) => {
+      const blocked = installBlocked({
+        isMac: process.platform === "darwin",
+        isPackaged: isPackaged(),
+        signature,
       });
+      dialog
+        .showMessageBox(focusedWindow(), {
+          type: "info",
+          buttons: updatePromptButtons(blocked),
+          defaultId: UPDATE_BTN_LATER,
+          cancelId: UPDATE_BTN_LATER,
+          title: "Update ready",
+          message: blocked
+            ? `${APP_NAME} v${version} is ready, but this build is not signed with a Developer ID, so it cannot replace itself in place.`
+            : `${APP_NAME} v${version} downloaded. Restart to install?`,
+          detail: blocked
+            ? "Download the release and replace the app in /Applications."
+            : undefined,
+        })
+        .then(({ response }) => {
+          // By label, not by index: an index constant that did not match the
+          // button array made the download fallback a dead button, which is the
+          // very defect this prompt was written to fix.
+          const action = updateActionFor(blocked, response);
+          if (action === "download") {
+            void shell.openExternal(RELEASES_URL);
+          } else if (action === "install") {
+            updater.quitAndInstall();
+          }
+        });
+    });
   });
   updater.on("error", (err) => {
     // Previously an empty handler, which is why a failed install looked like a
@@ -318,11 +349,17 @@ function setupAutoUpdater() {
     reportManualCheckError(err);
     console.error("[updater]", err);
   });
-  setTimeout(() => {
+  // A plain check, not checkForUpdatesAndNotify: that variant's notification
+  // says the update "will be automatically installed on exit", which is now a
+  // lie — autoInstallOnAppQuit is off precisely so "Later" means later. The
+  // update-downloaded handler below is the only thing that should tell the
+  // user, and it says something true.
+  backgroundCheckTimer = setTimeout(() => {
+    if (quitting) return;
     if (!shouldCheckInBackground(autoUpdateEnabled(settings), isPackaged())) {
       return;
     }
-    updater.checkForUpdatesAndNotify().catch(() => {});
+    updater.checkForUpdates().catch(() => {});
   }, UPDATE_CHECK_DELAY_MS);
 }
 
@@ -553,15 +590,24 @@ function settingsStatePath() {
   return path.join(app.getPath("userData"), "emu8086web-settings.json");
 }
 
+/**
+ * Write the settings file atomically.
+ *
+ * A plain `writeFileSync` is not atomic: a power cut or a kill mid-write leaves
+ * truncated JSON, and the next launch fails to parse it, silently reverting
+ * every setting — including the one documented as failing closed, where a user
+ * who turned updates off would silently get them back. Writing a sibling
+ * temporary file and renaming it over the target means the reader sees either
+ * the old file or the new one, never half of either.
+ */
 function persistSettings() {
   try {
     const fsSync = require("node:fs");
+    const target = settingsStatePath();
+    const tmp = `${target}.tmp`;
     fsSync.mkdirSync(app.getPath("userData"), { recursive: true });
-    fsSync.writeFileSync(
-      settingsStatePath(),
-      JSON.stringify(settings, null, 2),
-      "utf8",
-    );
+    fsSync.writeFileSync(tmp, JSON.stringify(settings, null, 2), "utf8");
+    fsSync.renameSync(tmp, target);
   } catch {
     /* best-effort: a preference is not worth failing the app over */
   }
@@ -825,9 +871,7 @@ app.whenReady().then(() => {
   restoreSettings();
   registerFolderIpc();
   // Off the critical path: the window should not wait on a codesign call.
-  void probeAppSignature().then((info) => {
-    appSignature = info;
-  });
+  appSignatureProbe = probeAppSignature();
   setupAutoUpdater();
 
   const start = DEV_URL
@@ -856,6 +900,14 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  // Cancel the deferred background check. Left alone it fires 15 s after
+  // launch regardless, and a user who quits at t=10 s would still get a network
+  // check and possibly a full download on a process that is on its way out.
+  quitting = true;
+  if (backgroundCheckTimer) {
+    clearTimeout(backgroundCheckTimer);
+    backgroundCheckTimer = null;
+  }
   if (serverChild) {
     try {
       serverChild.kill();

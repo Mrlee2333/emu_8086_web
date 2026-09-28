@@ -18,7 +18,11 @@ export const CHANGELOG: ChangelogEntry[] = [
       "New: an Automatic updates setting, on the desktop app only",
       "Build: the three typefaces are vendored, so the build no longer depends on Google Fonts. A transient failure there used to fail a release after the tag already existed",
       "Settings: Save now closes the dialog, and switching theme no longer discards the accent colour you chose",
-      "Tests: 29 new, including one that asserts the renderer and the main process read the update preference identically",
+      "Tests: 66 new, including one that asserts the renderer and the main process read the update preference identically, and one that runs the real codesign against a real bundle",
+      "Fix: the signature check was reading codesign at a verbosity that prints no authority line, so every build looked unsigned — including a correctly signed one",
+      "Fix: the update prompt no longer promises an install on exit that the app will not perform, and the background check no longer starts while quitting",
+      "Fix: the settings file is written atomically, so a torn write can no longer silently turn automatic updates back on",
+      "Fix: switching theme and saving stored the wrong theme default accent, and Automatic updates now respects Cancel like every other setting",
     ],
   },
   {

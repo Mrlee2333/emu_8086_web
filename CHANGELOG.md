@@ -2,46 +2,9 @@
 
 All notable changes to emu8086web are documented in this file.
 
-<<<<<<< HEAD
-## [1.5.1] — 2026-09-28
-
-### Added
-
-- **Register Details view** — the CPU registers panel header now has a Details button that opens the original emu8086 register view: one row per register, with the high byte and low byte in their own columns. `AH`/`AL`, `BH`/`BL`, `CH`/`CL` and `DH`/`DL` are visible at a glance, and a register with no halves (SI, DI, BP, SP, the segments and IP) shows a dash rather than an invented zero
-- **A per-register `i` button** — explains what the 8086 uses that register for, without a word of it on screen until asked
-- **Click a value to see it another way** — the same word in binary, unsigned decimal and signed decimal, with both halves broken out and a printable character noted where the byte is one
-- **Implied operands are named** — the Details dialog says which registers the next instruction touches without its operands saying so, so `MOVSB`'s use of SI, DI and CX stops being invisible
-
-The panel itself is unchanged in shape and still hex-only: the value a program is written in is all that is on screen until a register is asked about.
-
-### Correctness
-
-- 41 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
-- Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
-
-### Changed
-
-- **The IP cell shows the real instruction pointer when the program has halted.** It used to read `0x0000` in that state, which looks like the program had restarted. It now shows where execution actually stopped
-
-### Review findings
-
-Fixed after a review pass. Each was reproduced against the branch first, and each correction is now held by a test that runs the emulator rather than trusting the sentence.
-
-- **A byte's binary was grouped in twos, not fours** — `AH` read `00 10 00 11` instead of `0001 0011`, which looks like four separate values rather than one eight-bit one. The 16-bit grouping was always correct, so no existing test could have caught it
-- **CX was described as the high half of `DX:AX`** — it is DX. CX is the count that `LOOP` and `REP` drive and the shift count in a form like `SHL AX, CL`. A test now asserts that word `MUL` leaves CX untouched
-- **`CBW` and `CWD` were described as touching registers they do not** — `CBW` sign-extends `AL` into `AX` and writes nothing to `DX`; only `CWD` fills `DX`; and neither touches `CX`. A test runs both and checks all three registers
-- **Every string-instruction note claimed it decrements CX** — it only does under `REP`. A plain `MOVSB` leaves CX alone, and a test now runs both forms to prove the difference
-- **BX was described as the implicit base of the string instructions** — they move through SI and DI. BX's real implicit use is the table index `XLAT` reads through as `[BX + AL]`, and a test asserts a string op leaves BX untouched
-- **"only IRET restores the instruction pointer" was false** — `RET` pops the same target. A `CALL`/`RET` test proves the program returns and ends rather than falling through
-- **`AAD` was described as a packed-BCD instruction** — it combines an unpacked tens-and-ones pair, and is the inverse of `AAM`. Packed BCD is what `DAA` and `DAS` adjust
-- **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
-- **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
-- A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
-=======
 ## [1.5.2] — 2026-09-28
 
-> Ships after 1.5.1 (the register Details view, PR #14). This branch is cut
-> from `main`, so the 1.5.1 section below appears when that PR merges.
+> Ships after 1.5.1 (the register Details view, PR #14), on top of it.
 
 The macOS app lost its settings and its updater did nothing. Both were reported
 together; they turned out to be two separate bugs, and one of them was hiding
@@ -79,14 +42,64 @@ A review round found seven problems, three of them blocking. All of them were in
 
 Also removed: `installBlocked` took an `appPath` it never read, and the dead `UPDATE_BTN_RESTART` / `UPDATE_BTN_DOWNLOAD` constants that were the button bug.
 
+### Second review round
+
+Nine more findings, and the first was the same class of error as the last round's worst: a test that proved the rule while the rule was never reached.
+
+- **The signature check was inverted, not broken.** `codesign -dv` prints **no `Authority=` line at all** — the first `-v` is consumed as `--verify`, so `-dv` is verbosity zero. Measured on real bundles: `-d` and `-dv` print 0 authority lines, `-dvvv` prints 3. So every build looked ad-hoc, and the app would have blocked the install even on a correctly Developer-ID-signed one. The call now uses `-dvvv`, ad-hoc is detected from `Signature=adhoc` *and* the `flags=0x…(adhoc,…)` bit, and the verbosity lives in an exported constant because a test that only checks what `codesign` prints passes whatever the caller asked for
+- **The test fixtures were invented.** The old ones were labelled as real `codesign` output but contained `Authority=` lines the command cannot emit at that verbosity. They are now captured from two real bundles, and a new test shells out to the real binary and asserts the verbosity the app uses is one that prints the chain
+- **The app told the user a lie.** `checkForUpdatesAndNotify` raises a macOS notification saying the update "will be automatically installed on exit" — which `autoInstallOnAppQuit = false` now prevents. The background check is a plain check, and the prompt is the only thing that speaks
+- **The background check could fire during quit.** The 15 s timer had no handle and no quit guard, so quitting at 10 s still started a network check and possibly a full download on a dying process. It is now cancelled on `before-quit`
+- **A corrupt settings file silently re-enabled updates** for a user who had turned them off, because a non-atomic `writeFileSync` can leave truncated JSON and a failed parse reads as "never chosen". The write is now a temp file plus a rename
+- **Switching theme then saving stored the wrong theme's default accent.** Removing the theme dependency had fixed the opposite bug, so a fresh profile that chose Light saved the *dark* default into a light theme. A chosen accent and a defaulted one are now tracked apart
+- **Automatic updates ignored Cancel**, being the one control in the dialog that applied instantly. It is staged like the rest
+- **An ephemeral fallback port was silent.** All four pinned ports being busy reintroduces the original bug with no signal; the app now says so on stderr, using a helper that was previously exported but never called
+- **The signature probe raced the first update check**, so an update landing in the first second could offer the dead Restart button. The handler now waits for the probe
+
+Also: the hand-rolled `path.resolve` in `bundlePathFrom` was quietly wrong for drive-letter input and is now `node:path`; the README version is current; and this branch is **rebased onto v1.5.1** rather than onto `main`, which removes the four-way version and changelog conflict outright.
+
 ### Tests
 
-43 new in total. The ones that matter most:
+66 new in total. The ones that matter most:
 
 - **The renderer and the main process read the same setting identically.** They each carry their own copy of the truthy-value list, because they are separate processes and the main process cannot import TypeScript. A disagreement would mean the settings dialog says “off” while the updater is still on. A table-driven test asserts the two agree on fourteen inputs
-- **Nothing in the updater is verified only against a mock.** The bundle path, the signature parse and the button choice are exercised against a real ad-hoc-signed `.app` built by `electron-builder`, and against real `codesign -dv` output read from it
+- **Nothing in the updater is verified only against a mock.** The bundle path, the signature parse and the button choice are exercised against a real ad-hoc-signed `.app` built by `electron-builder`, and against real `codesign -dvvv` output read from it
 - **The ephemeral port is last, always**, and a guard that a reintroduced `next/font/google` import is caught by the very rule that checks for it — a test that cannot fail is decoration
->>>>>>> 1ec9e51 (v1.5.2: the desktop app forgets its settings, and the installer does nothing)
+
+## [1.5.1] — 2026-09-28
+
+### Added
+
+- **Register Details view** — the CPU registers panel header now has a Details button that opens the original emu8086 register view: one row per register, with the high byte and low byte in their own columns. `AH`/`AL`, `BH`/`BL`, `CH`/`CL` and `DH`/`DL` are visible at a glance, and a register with no halves (SI, DI, BP, SP, the segments and IP) shows a dash rather than an invented zero
+- **A per-register `i` button** — explains what the 8086 uses that register for, without a word of it on screen until asked
+- **Click a value to see it another way** — the same word in binary, unsigned decimal and signed decimal, with both halves broken out and a printable character noted where the byte is one
+- **Implied operands are named** — the Details dialog says which registers the next instruction touches without its operands saying so, so `MOVSB`'s use of SI, DI and CX stops being invisible
+
+The panel itself is unchanged in shape and still hex-only: the value a program is written in is all that is on screen until a register is asked about.
+
+### Correctness
+
+- 30 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
+- Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
+
+### Changed
+
+- **The IP cell shows the real instruction pointer when the program has halted.** It used to read `0x0000` in that state, which looks like the program had restarted. It now shows where execution actually stopped
+
+### Review findings
+
+Fixed after a review pass. Each was reproduced against the branch first, and each correction is now held by a test that runs the emulator rather than trusting the sentence.
+
+- **A byte's binary was grouped in twos, not fours** — `AH` read `00 10 00 11` instead of `0001 0011`, which looks like four separate values rather than one eight-bit one. The 16-bit grouping was always correct, so no existing test could have caught it
+- **CX was described as the high half of `DX:AX`** — it is DX. CX is the count that `LOOP` and `REP` drive and the shift count in a form like `SHL AX, CL`. A test now asserts that word `MUL` leaves CX untouched
+- **`CBW` and `CWD` were described as touching registers they do not** — `CBW` sign-extends `AL` into `AX` and writes nothing to `DX`; only `CWD` fills `DX`; and neither touches `CX`. A test runs both and checks all three registers
+- **Every string-instruction note claimed it decrements CX** — it only does under `REP`. A plain `MOVSB` leaves CX alone, and a test now runs both forms to prove the difference
+- **BX was described as the implicit base of the string instructions** — they move through SI and DI. BX's real implicit use is the table index `XLAT` reads through as `[BX + AL]`, and a test asserts a string op leaves BX untouched
+- **"only IRET restores the instruction pointer" was false** — `RET` pops the same target. A `CALL`/`RET` test proves the program returns and ends rather than falling through
+- **`AAD` was described as a packed-BCD instruction** — it combines an unpacked tens-and-ones pair, and is the inverse of `AAM`. Packed BCD is what `DAA` and `DAS` adjust
+- **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
+- **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
+- A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
 
 ### Second review round
 

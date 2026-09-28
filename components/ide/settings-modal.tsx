@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AdSenseUnit, AD_SLOTS } from "@/components/ads/adsense-unit";
 import { AuthorContacts } from "@/components/ide/author-contacts";
 import { DialogShell } from "@/components/ide/dialog-shell";
@@ -19,7 +19,13 @@ import {
   type TabSize,
   WORD_WRAP_KEY,
 } from "@/lib/ide/editor-prefs";
-import { APP_AUTHOR, APP_NAME, APP_REPO_URL, APP_TAGLINE, APP_VERSION } from "@/lib/version";
+import {
+  APP_AUTHOR,
+  APP_NAME,
+  APP_REPO_URL,
+  APP_TAGLINE,
+  APP_VERSION,
+} from "@/lib/version";
 
 type Theme = "dark" | "light";
 
@@ -50,23 +56,62 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [fontScale, setFontScale] = useState(100);
   const [accent, setAccent] = useState(defaultAccentForTheme(theme));
+  /** True when the accent came from storage, i.e. the user chose it. */
+  const [accentChosen, setAccentChosen] = useState(false);
+  /**
+   * Staged, like every other control here. It was previously applied the
+   * instant the box was ticked, which meant it was the one setting in the
+   * dialog that ignored Cancel — untick it, press Cancel, and it stayed off.
+   */
+  const [autoUpdateDraft, setAutoUpdateDraft] = useState(autoUpdate);
   const onDesktop = isDesktop();
 
   // Read the stored preferences once per open, deferred so the first client
-  // paint matches the server. `theme` is deliberately not a dependency: the
-  // effect used to re-run on a theme change and reset the accent swatch the
-  // instant Dark or Light was pressed, discarding a colour the user had
-  // chosen. Switching theme leaves a chosen accent alone, which is what the
-  // Reset button is for.
+  // paint matches the server.
+  //
+  // The accent is decided entirely here, from storage, and `accentChosen`
+  // records whether it came from the user or is only a default. Both are set in
+  // the same microtask so the follow-theme effect below cannot observe a
+  // half-loaded pair: run separately, its own microtask landed after this one
+  // and overwrote a stored colour with the default.
   useEffect(() => {
     if (!open) return;
     queueMicrotask(() => {
       const scale = localStorage.getItem(FONT_SCALE_KEY);
       if (scale) setFontScale(Number(scale) || 100);
-      setAccent(loadAccent() ?? defaultAccentForTheme(theme));
+      const stored = loadAccent();
+      setAccentChosen(stored !== null);
+      setAccent(stored ?? defaultAccentForTheme(theme));
+      setAutoUpdateDraft(autoUpdate);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- read once per open
   }, [open]);
+
+  // Follow the theme, but only for an accent the user never chose.
+  //
+  // Re-reading storage on every theme change was the bug before v1.5.2: it threw
+  // away a colour someone had picked. Dropping the theme dependency instead
+  // fixed that and created the opposite one — on a fresh profile, opening
+  // Settings in dark and then choosing Light saved the *dark* default accent
+  // into a light theme, because the effect had already filled the swatch. So
+  // the two cases are separated explicitly: a chosen accent is the user's, a
+  // defaulted one merely follows the theme.
+  //
+  // The ref keeps this to *changes* after the load. Without it the effect also
+  // runs on the opening render, racing the load effect above.
+  const accentLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      accentLoadedRef.current = false;
+      return;
+    }
+    if (!accentLoadedRef.current) {
+      accentLoadedRef.current = true;
+      return;
+    }
+    if (accentChosen) return;
+    queueMicrotask(() => setAccent(defaultAccentForTheme(theme)));
+  }, [open, theme, accentChosen]);
 
   const save = async () => {
     localStorage.setItem(FONT_SCALE_KEY, String(fontScale));
@@ -74,7 +119,11 @@ export function SettingsModal({
     localStorage.setItem(TAB_SIZE_KEY, String(tabSize));
     localStorage.setItem(WORD_WRAP_KEY, wordWrap ? "1" : "0");
     localStorage.setItem(ACCENT_KEY, accent);
-    localStorage.setItem(AUTO_UPDATE_KEY, autoUpdate ? "1" : "0");
+    localStorage.setItem(AUTO_UPDATE_KEY, autoUpdateDraft ? "1" : "0");
+    // The staged value is what the user sees ticked, so it is the one that gets
+    // persisted and mirrored. Applying the prop instead would write back the
+    // pre-tick value and silently undo the change on the next launch.
+    onAutoUpdateChange(autoUpdateDraft);
     applyAccent(accent, theme);
     // The main process cannot read localStorage, so the desktop app's copy has
     // to be told. A failure here must not stop the settings being applied.
@@ -87,8 +136,11 @@ export function SettingsModal({
   const resetAccent = () => {
     const d = defaultAccentForTheme(theme);
     setAccent(d);
+    // Back to following the theme rather than being the user's choice.
+    setAccentChosen(false);
     localStorage.removeItem(ACCENT_KEY);
     applyAccent(null, theme);
+    void mirrorPrefs();
   };
 
   return (
@@ -144,8 +196,13 @@ export function SettingsModal({
               onChange={(e) => {
                 const v = e.target.value;
                 setAccent(v);
+                setAccentChosen(true);
                 localStorage.setItem(ACCENT_KEY, v);
                 applyAccent(v, theme);
+                // Mirrored here as well as on Save, or a Reset-then-close would
+                // leave the main process holding an accent the user deleted and
+                // restore it on the next launch that lands on a new origin.
+                void mirrorPrefs();
               }}
               onBlur={() => {
                 /* allow backdrop dismiss after native picker closes */
@@ -222,8 +279,8 @@ export function SettingsModal({
             <input
               id="auto-update"
               type="checkbox"
-              checked={autoUpdate}
-              onChange={(e) => onAutoUpdateChange(e.target.checked)}
+              checked={autoUpdateDraft}
+              onChange={(e) => setAutoUpdateDraft(e.target.checked)}
               className="h-4 w-4 accent-amber"
             />
           </div>

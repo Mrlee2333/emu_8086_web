@@ -9,10 +9,13 @@
  * Run: bun test electron
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import {
   autoUpdateEnabled,
   bundlePathFrom,
+  CODESIGN_ARGS,
   installBlocked,
   parseSignature,
   shouldCheckInBackground,
@@ -20,28 +23,53 @@ import {
   updatePromptButtons,
 } from "./update-pref.js";
 
-/** What `codesign -dv` prints for the two states that matter. */
-const ADHOC = `Executable=/Applications/emu8086web.app/Contents/MacOS/emu8086web
-Identifier=com.nafiskabbo.emu8086web
-Format=app bundle with Mach-O universal
-CodeDirectory v=20500 size=512 flags=0x10000(runtime)
+/**
+ * Fixture output, captured from `codesign -dvvv` on two real `.app` bundles on
+ * this machine — not written from what the output "should" look like. That
+ * distinction is the whole point: the previous fixtures were invented, and
+ * because `codesign -dv` prints no `Authority=` line at all, an invented
+ * fixture hid that the real command could never produce the thing being
+ * matched. The ad-hoc fixture is Electron's own bundle; the other is a
+ * Developer-signed build produced by electron-builder.
+ *
+ * @see the live round-trip test at the end of this file
+ */
+const ADHOC = `Executable=/path/to/Electron.app/Contents/MacOS/Electron
+Identifier=Electron
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=392 flags=0x20002(adhoc,linker-signed) hashes=9+0 location=embedded
+Hash type=sha256 size=32
+CDHash=098949f2901f57e20ce76ea6a1b17234c0bfd1db
 Signature=adhoc
-Info.plist entries=12
+TeamIdentifier=not set
 `;
 
-const DEVELOPER_ID = `Executable=/Applications/emu8086web.app/Contents/MacOS/emu8086web
+/** A real Developer-signed bundle at -dvvv: authority chain, no adhoc. */
+const DEVELOPMENT = `Executable=/path/to/emu8086web.app/Contents/MacOS/emu8086web
 Identifier=com.nafiskabbo.emu8086web
+Format=app bundle with Mach-O universal (binary)
+CodeDirectory v=20500 size=453 flags=0x10000(runtime) hashes=3+7 location=embedded
+Signature size=9097
+Timestamp=28 Sep, 2026 at 7:20:53 AM
+Authority=Apple Development: NAFIS ISLAM KABBO (85U76F99Y3)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=3W4D22H624
+`;
+
+/** Not obtainable on this machine (no Developer ID certificate), so this one
+ *  is constructed — but from the documented format, and the live test below
+ *  proves the parser reads a real authority chain of the same shape. */
+const DEVELOPER_ID = `Executable=/path/to/emu8086web.app/Contents/MacOS/emu8086web
+Identifier=com.nafiskabbo.emu8086web
+Format=app bundle with Mach-O universal (binary)
+CodeDirectory v=20500 size=453 flags=0x10000(runtime) hashes=3+7 location=embedded
+Signature size=8128
+Timestamp=28 Sep, 2026 at 7:20:53 AM
 Authority=Developer ID Application: Nafis Islam Kabbo (3W4D22H624)
 Authority=Developer ID Certification Authority
 Authority=Apple Root CA
 TeamIdentifier=3W4D22H624
-Signature=821a
-`;
-
-const DEVELOPMENT = `Executable=/Applications/emu8086web.app/Contents/MacOS/emu8086web
-Authority=Apple Development: NAFIS ISLAM KABBO (85U76F99Y3)
-TeamIdentifier=3W4D22H624
-Signature=821a
 `;
 
 describe("parseSignature", () => {
@@ -311,5 +339,131 @@ describe("shouldCheckInBackground", () => {
 
   it("does not check in dev", () => {
     assert.equal(shouldCheckInBackground(true, false), false);
+  });
+});
+
+/**
+ * The real `codesign`, read from real bundles.
+ *
+ * The first version of this file used invented fixtures, and because
+ * `codesign -dv` prints no `Authority=` line at all, an invented fixture
+ * cheerfully asserted a string the command can never emit — the whole
+ * signature feature was inverted and every test was green. So the verbosity
+ * this module's caller must use is now pinned by a test that shells out to
+ * the real binary.
+ *
+ * Skipped where codesign or a bundle is unavailable, which is everything that
+ * is not macOS; the rest of the suite is hermetic.
+ */
+describe("codesign, for real", () => {
+  const ELECTRON_BUNDLE = "node_modules/electron/dist/Electron.app"; // ad-hoc signed by the installer
+  /** A Developer-signed bundle from a local electron-builder run, if present. */
+  const DEVELOPER_BUNDLE = "dist/mac-arm64/emu8086web.app";
+  const isMac = process.platform === "darwin";
+  const codesign = "/usr/bin/codesign";
+
+  function read(verbosity: string, bundle: string): string {
+    const r = spawnSync(codesign, [verbosity, bundle], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    // codesign reports on stderr, not stdout.
+    return `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  }
+
+  it("prints no Authority line at -dv, which is why -dvvv is required", function (this: {
+    skip: () => void;
+  }) {
+    if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
+      return this.skip();
+    }
+    // This is the trap: -dv is verbosity 0 because the first -v is consumed as
+    // --verify. Anything matching on Authority at that verbosity always fails.
+    assert.equal(
+      /^Authority=/m.test(read("-dv", ELECTRON_BUNDLE)),
+      false,
+      "-dv must not emit Authority, or the verbosity argument in main.js is wrong",
+    );
+    assert.equal(
+      /^Authority=/m.test(read("-dvvv", ELECTRON_BUNDLE)),
+      false,
+      "an ad-hoc bundle has no authority chain even at -dvvv",
+    );
+  });
+
+  it("reads a real ad-hoc bundle as ad-hoc and blocks the install", function (this: {
+    skip: () => void;
+  }) {
+    if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
+      return this.skip();
+    }
+    const out = read("-dvvv", ELECTRON_BUNDLE);
+    const sig = parseSignature(out);
+    assert.equal(sig.adhoc, true, "no authority chain and flags say adhoc");
+    assert.equal(sig.authority, null);
+    assert.equal(sig.teamId, null, '"not set" is not a team');
+    assert.equal(
+      installBlocked({ isMac: true, isPackaged: true, signature: sig }),
+      true,
+    );
+  });
+
+  it("reads a real Developer-signed bundle as not ad-hoc, and still blocks it", function (this: {
+    skip: () => void;
+  }) {
+    if (!isMac || !existsSync(codesign) || !existsSync(DEVELOPER_BUNDLE)) {
+      return this.skip();
+    }
+    const out = read("-dvvv", DEVELOPER_BUNDLE);
+    const sig = parseSignature(out);
+    // The regression this whole block exists for: at -dv this came back
+    // authority=null, adhoc=true, and every build was blocked.
+    assert.equal(sig.adhoc, false, "a signed bundle is not ad-hoc");
+    assert.ok(sig.authority, "an authority line is now visible at -dvvv");
+    assert.equal(sig.teamId, "3W4D22H624", "a real team id is parsed");
+    // Signed, but not with Developer ID Application, so still blocked.
+    assert.equal(
+      installBlocked({ isMac: true, isPackaged: true, signature: sig }),
+      true,
+    );
+    // And the rule reads the authority, not the absence of one.
+    assert.match(sig.authority!, /^(Apple|Developer) /);
+  });
+
+  it("asks for a verbosity that actually prints the authority chain", function (this: {
+    skip: () => void;
+  }) {
+    if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
+      return this.skip();
+    }
+    // The check that would have caught the original bug. Everything else here
+    // tests codesign's behaviour, which is identical whatever the caller asks
+    // for — only this ties the constant to the output it is parsed from.
+    assert.notDeepEqual(
+      CODESIGN_ARGS,
+      ["-dv"],
+      "CODESIGN_ARGS must not be -dv: that is verbosity 0 and emits no Authority=",
+    );
+    const out = spawnSync(
+      codesign,
+      [...CODESIGN_ARGS, DEVELOPER_BUNDLE].filter((a, i) =>
+        i === 0 ? true : existsSync(DEVELOPER_BUNDLE),
+      ),
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
+    if (!existsSync(DEVELOPER_BUNDLE)) {
+      assert.equal(text.length, 0, "no bundle to read");
+      return;
+    }
+    assert.match(
+      text,
+      /^Authority=/m,
+      "CODESIGN_ARGS must be a level that prints Authority=",
+    );
+    // And the round trip the app actually performs.
+    const sig = parseSignature(text);
+    assert.equal(sig.adhoc, false, "a signed bundle parses as not ad-hoc");
+    assert.ok(sig.authority, "and yields an authority to match on");
   });
 });

@@ -34,6 +34,8 @@ const DEFAULT_AUTO_UPDATE = true;
  * disagreement here means the settings dialog says "off" while the updater is
  * still on.
  */
+const path = require("node:path");
+
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
 /**
@@ -62,17 +64,45 @@ function autoUpdateEnabled(settings) {
  */
 
 /**
- * Parse `codesign -dv` output into the facts that matter here.
+ * The `codesign` arguments, verbosity included.
  *
- * An ad-hoc signature is reported as `Signature=adhoc` with no `Authority=`
- * line at all. That is the state the published builds are in, and it is the
- * state an in-place update cannot be applied from.
+ * This is an exported constant rather than a literal at the call site on
+ * purpose. The verbosity is load-bearing and was wrong once already: a test
+ * that checks what `codesign` prints at each level passes either way, because
+ * it never looks at what the caller asked for. Exporting it means the same
+ * test can assert the pair — and `main.js` cannot drift from it.
  *
- * `unknown` on the input, not `string`: this parses the output of a
- * subprocess that can fail, and a signature probe must not be the thing that
- * throws.
+ * `-dv` is verbosity 0 and emits no `Authority=` line, so anything matching on
+ * an authority at that level always fails. `-dvvv` is the cheapest level that
+ * prints the full chain.
+ */
+const CODESIGN_ARGS = ["-dvvv"];
+
+/**
+ * Parse `codesign` output into the facts that matter here.
  *
- * @param {unknown} output
+ * **Verbosity matters, and getting it wrong silently inverts the whole
+ * feature.** Per the codesign man page the first `-v` is read as `--verify`
+ * and does not raise verbosity, so `-dv` is verbosity 0 and prints **no
+ * `Authority=` line at all**. Measured against real bundles on this machine:
+ *
+ * ```
+ * -d    -> 0 Authority lines
+ * -dv   -> 0 Authority lines     <- what this used to pass
+ * -dvvv -> 3 Authority lines
+ * ```
+ *
+ * So at `-dv` an `Authority=`-based test is always false, a Developer ID build
+ * looks ad-hoc, and `installBlocked` returns true for every build — the feature
+ * cannot report success. `main.js` must call this with `-dvvv`.
+ *
+ * Ad-hoc is detected from two independent signals rather than from the absence
+ * of an authority, because absence-of-evidence is exactly what broke the first
+ * version: `Signature=adhoc` on its own line, and `adhoc` in the CodeDirectory
+ * `flags=0x…(adhoc,…)`.
+ *
+ * @param {unknown} output anything at all, including the non-strings a caller
+ *   might hand it; nothing here may throw
  * @returns {SignatureInfo}
  */
 function parseSignature(output) {
@@ -80,10 +110,18 @@ function parseSignature(output) {
   const authority = text.match(/^Authority=(.*)$/m);
   const team = text.match(/^TeamIdentifier=(.*)$/m);
   const adhocLine = text.match(/^Signature=adhoc\s*$/m);
+  const flags = text.match(
+    /^CodeDirectory[^\n]*flags=0x[0-9a-f]+\(([^)]*)\)/im,
+  );
+  const adhocFlag = flags ? /\badhoc\b/.test(flags[1]) : false;
   return {
-    adhoc: Boolean(adhocLine) || !authority,
+    // Either signal is enough, and a signature reporting neither is treated as
+    // ad-hoc: an identity that could not be read must not be trusted to
+    // replace the app in place.
+    adhoc: Boolean(adhocLine) || adhocFlag || !authority,
     authority: authority ? authority[1].trim() : null,
-    teamId: team ? team[1].trim() : null,
+    // "not set" is the ad-hoc value, not a team.
+    teamId: team && team[1].trim() !== "not set" ? team[1].trim() : null,
   };
 }
 
@@ -94,8 +132,10 @@ function parseSignature(output) {
  * `Failed to get 'appPath' path` for that name, so the signature probe
  * silently never engaged and the whole feature was dead on packaged macOS.
  * `resourcesPath` is `<bundle>/Contents/Resources`, so the bundle is two levels
- * up. Pure, and tested against a real ad-hoc-signed `.app`, because getting
- * this wrong produces no error — only a feature that never turns on.
+ * up.
+ *
+ * Pure, and tested against a real ad-hoc-signed `.app`, because getting this
+ * wrong produces no error — only a feature that never turns on.
  *
  * @param {unknown} resourcesPath anything at all, including the non-strings a
  *   caller might hand it; nothing here may throw
@@ -103,31 +143,14 @@ function parseSignature(output) {
  */
 function bundlePathFrom(resourcesPath) {
   if (typeof resourcesPath !== "string" || resourcesPath === "") return null;
-  // Normalise the separator and drop a trailing slash *before* splitting, so
-  // ".../Contents/Resources/" does not yield a phantom empty final segment and
-  // then walk up one directory too few.
-  const posix = resourcesPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  // Drop a trailing slash *before* resolving, so ".../Contents/Resources/" does
+  // not yield a phantom empty final segment and walk up one level too few.
+  const trimmed = resourcesPath.replace(/[\\/]+$/, "");
   // Must end in Contents/Resources, else the path is not what we think it is.
-  if (!/\/Contents\/Resources$/.test(posix)) return null;
-  return pathResolve(posix, "..", "..");
-}
-
-/**
- * `path.resolve` without requiring `node:path` at module scope, so this file
- * stays importable by a test that has no Electron runtime.
- *
- * @param {string} from
- * @param {...string} rest
- * @returns {string}
- */
-function pathResolve(from, ...rest) {
-  const parts = from.replace(/\\/g, "/").split("/");
-  for (const part of rest) {
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  const joined = parts.filter((p, i) => p !== "" || i === 0).join("/");
-  return joined.startsWith("/") ? joined : `/${joined}`;
+  if (!/[\\/]Contents[\\/]Resources$/.test(trimmed)) return null;
+  // The one caller is darwin-packaged, so this is a POSIX path; node:path is
+  // core and imports without an Electron runtime, which the test suite does.
+  return path.resolve(trimmed, "..", "..");
 }
 
 /**
@@ -199,6 +222,7 @@ function shouldCheckInBackground(enabled, isPackaged) {
 
 module.exports = {
   DEFAULT_AUTO_UPDATE,
+  CODESIGN_ARGS,
   autoUpdateEnabled,
   parseSignature,
   installBlocked,
