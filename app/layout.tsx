@@ -2,26 +2,12 @@ import { Analytics } from "@vercel/analytics/next";
 import Script from "next/script";
 import { ADSENSE_CLIENT, isAdsEnabled } from "@/lib/adsense";
 import { buildJsonLd, rootMetadata } from "@/lib/seo";
-import { IBM_Plex_Mono, IBM_Plex_Sans, VT323 } from "next/font/google";
+import {
+  IBM_Plex_Mono as plexMono,
+  IBM_Plex_Sans as plexSans,
+  VT323 as vt323,
+} from "@/lib/fonts";
 import "./globals.css";
-
-const plexSans = IBM_Plex_Sans({
-  variable: "--font-plex-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const plexMono = IBM_Plex_Mono({
-  variable: "--font-plex-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const vt323 = VT323({
-  variable: "--font-vt323",
-  subsets: ["latin"],
-  weight: "400",
-});
 
 export const metadata = {
   ...rootMetadata,

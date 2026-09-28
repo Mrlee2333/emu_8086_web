@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AdSenseAnchor, AdSenseUnit, AD_SLOTS } from "@/components/ads/adsense-unit";
+import {
+  AdSenseAnchor,
+  AdSenseUnit,
+  AD_SLOTS,
+} from "@/components/ads/adsense-unit";
 import { AluPanel } from "@/components/ide/alu-panel";
-import { CodeEditor, type CodeEditorHandle } from "@/components/ide/code-editor";
+import {
+  CodeEditor,
+  type CodeEditorHandle,
+} from "@/components/ide/code-editor";
 import {
   ConsolePanel,
   FlagsPanel,
@@ -40,10 +47,14 @@ import { isAdsEnabled } from "@/lib/adsense";
 import { isElectronRenderer } from "@/lib/electron/offline";
 import {
   applyAccent,
+  DEFAULT_AUTO_UPDATE,
   FONT_SCALE_KEY,
   loadAccent,
+  loadAutoUpdate,
   loadTabSize,
   loadWordWrap,
+  mirrorPrefs,
+  restoreMirroredPrefs,
   TAB_SIZE_KEY,
   type TabSize,
   WORD_WRAP_KEY,
@@ -104,7 +115,9 @@ import {
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 400;
 
 export function IdeWorkspace() {
-  const [files, setFiles] = useState<WorkspaceFile[]>(() => [createDefaultFile()]);
+  const [files, setFiles] = useState<WorkspaceFile[]>(() => [
+    createDefaultFile(),
+  ]);
   const [activeId, setActiveId] = useState(() => files[0]?.id ?? "");
   // Open editor tabs — VS Code semantics: closing a tab keeps the project file.
   const [openIds, setOpenIds] = useState<string[]>(() => [files[0]?.id ?? ""]);
@@ -117,6 +130,8 @@ export function IdeWorkspace() {
   const [shareOpen, setShareOpen] = useState(false);
   const [tabSize, setTabSize] = useState<TabSize>(4);
   const [wordWrap, setWordWrap] = useState(false);
+  // v1.5.2: desktop-only, and read by the main process rather than the UI.
+  const [autoUpdate, setAutoUpdate] = useState(DEFAULT_AUTO_UPDATE);
   // v1.4.0 folder workspace (VS Code-like explorer + collapsible sidebar).
   const [folderRoot, setFolderRoot] = useState<ExplorerRoot | null>(null);
   const [folderName, setFolderName] = useState("");
@@ -271,7 +286,9 @@ export function IdeWorkspace() {
 
     const shareCode = takeShareCodeFromUrl();
     if (shareCode) {
-      const fromSession = sessionStorage.getItem(`emu8086web:share:${shareCode}`);
+      const fromSession = sessionStorage.getItem(
+        `emu8086web:share:${shareCode}`,
+      );
       if (fromSession) {
         sessionStorage.removeItem(`emu8086web:share:${shareCode}`);
         queueMicrotask(() => applyShared(fromSession));
@@ -293,9 +310,7 @@ export function IdeWorkspace() {
         if (stored) {
           setFiles(stored.files);
           setActiveId(stored.activeId);
-          setOpenIds(
-            stored.openIds ?? stored.files.map((f) => f.id),
-          );
+          setOpenIds(stored.openIds ?? stored.files.map((f) => f.id));
           lastSynced.current = null;
         }
         setHydrated(true);
@@ -318,9 +333,26 @@ export function IdeWorkspace() {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => {
+    let cancelled = false;
+    // v1.5.2: the desktop app's localStorage can come back empty when the
+    // origin changed between launches, so the main process's mirror is
+    // consulted FIRST and only fills gaps — a value already here is the one
+    // the user set in this origin and is never overwritten.
+    const hydrate = async () => {
+      let restored: string[] = [];
+      try {
+        restored = await restoreMirroredPrefs();
+      } catch {
+        /* best-effort */
+      }
+      if (cancelled) return;
+      if (restored.includes("emu8086web:theme")) {
+        const t = localStorage.getItem("emu8086web:theme");
+        if (t === "light" || t === "dark") emu.applyTheme(t);
+      }
       setTabSize(loadTabSize());
       setWordWrap(loadWordWrap());
+      setAutoUpdate(loadAutoUpdate());
       const scale = localStorage.getItem(FONT_SCALE_KEY);
       if (scale) {
         document.documentElement.style.fontSize = `${Number(scale) || 100}%`;
@@ -335,7 +367,13 @@ export function IdeWorkspace() {
       } catch {
         /* sidebar prefs are best-effort */
       }
-    });
+      // Keep the main process's copy current for the next launch.
+      void mirrorPrefs();
+    };
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefs once on mount
   }, []);
 
@@ -414,7 +452,10 @@ export function IdeWorkspace() {
     if (!hydrated) return;
     persistRef.current = { files, activeId, openIds };
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
-    persistTimerRef.current = setTimeout(flushPersist, WORKSPACE_PERSIST_DEBOUNCE_MS);
+    persistTimerRef.current = setTimeout(
+      flushPersist,
+      WORKSPACE_PERSIST_DEBOUNCE_MS,
+    );
   }, [files, activeId, openIds, hydrated, flushPersist]);
 
   // Losing a trailing keystroke to a tab close is the whole point of debouncing.
@@ -429,11 +470,24 @@ export function IdeWorkspace() {
   const persistTabSize = useCallback((size: TabSize) => {
     setTabSize(size);
     localStorage.setItem(TAB_SIZE_KEY, String(size));
+    void mirrorPrefs();
   }, []);
 
   const persistWordWrap = useCallback((wrap: boolean) => {
     setWordWrap(wrap);
     localStorage.setItem(WORD_WRAP_KEY, wrap ? "1" : "0");
+    void mirrorPrefs();
+  }, []);
+
+  // v1.5.2: the main process is what actually acts on this one, so it is
+  // mirrored as soon as it changes rather than waiting for Save.
+  // Called on Save, not on tick, so the dialog's Cancel discards the change like
+  // every other control in it. The modal has already written the key by the
+  // time this runs; the mirror is what has to follow, because the main process
+  // cannot read localStorage and this is the setting it acts on.
+  const persistAutoUpdate = useCallback((enabled: boolean) => {
+    setAutoUpdate(enabled);
+    void mirrorPrefs();
   }, []);
 
   const { machine, assembled, tick } = emu;
@@ -447,8 +501,7 @@ export function IdeWorkspace() {
       : runtimeError
         ? `Runtime error — ${runtimeError}`
         : null;
-  const errorLine =
-    emu.assemblyErrorLine ?? machine?.getErrorLine() ?? null;
+  const errorLine = emu.assemblyErrorLine ?? machine?.getErrorLine() ?? null;
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -660,12 +713,10 @@ export function IdeWorkspace() {
             for (const part of parts) {
               probe = await probe.getDirectoryHandle(part);
             }
-            const exists = await probe
-              .getFileHandle(leaf)
-              .then(
-                () => true,
-                () => false,
-              );
+            const exists = await probe.getFileHandle(leaf).then(
+              () => true,
+              () => false,
+            );
             if (exists) throw new Error("Already exists");
           }
           await createWebEntry(webDirRef.current, rel, isDirectory);
@@ -688,7 +739,9 @@ export function IdeWorkspace() {
         showToast(
           e instanceof Error && /already exists/i.test(e.message)
             ? `Already exists: ${rel}`
-            : (e instanceof Error ? e.message : "Create failed"),
+            : e instanceof Error
+              ? e.message
+              : "Create failed",
         );
       }
     },
@@ -866,9 +919,7 @@ export function IdeWorkspace() {
     if (!activeId) return;
     emu.setSource(content);
     setFiles((prev) =>
-      prev.map((f) =>
-        f.id === activeId ? { ...f, content, dirty: true } : f,
-      ),
+      prev.map((f) => (f.id === activeId ? { ...f, content, dirty: true } : f)),
     );
   };
 
@@ -950,9 +1001,7 @@ export function IdeWorkspace() {
     if (!raw) return;
     const name = ensureAsmExtension(raw);
     setFiles((prev) =>
-      prev.map((f) =>
-        f.id === id ? { ...f, name, dirty: true } : f,
-      ),
+      prev.map((f) => (f.id === id ? { ...f, name, dirty: true } : f)),
     );
   };
 
@@ -1102,7 +1151,9 @@ export function IdeWorkspace() {
         ),
       );
       showToast(
-        movedOn ? `Saved ${folderRel} (newer edits still unsaved)` : `Saved ${folderRel}`,
+        movedOn
+          ? `Saved ${folderRel} (newer edits still unsaved)`
+          : `Saved ${folderRel}`,
       );
     };
     if (folderRel && backend === "electron") {
@@ -1271,7 +1322,8 @@ export function IdeWorkspace() {
     };
     refresh();
     window.addEventListener("emu8086web:shortcuts-changed", refresh);
-    return () => window.removeEventListener("emu8086web:shortcuts-changed", refresh);
+    return () =>
+      window.removeEventListener("emu8086web:shortcuts-changed", refresh);
   }, []);
 
   useEffect(() => {
@@ -1556,87 +1608,89 @@ export function IdeWorkspace() {
                 className="flex min-h-0 flex-col overflow-hidden"
                 style={{ flex: `0 0 ${editorPct}%` }}
               >
-              <div className="paneltitle flex shrink-0 items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-2 truncate">
-                  <span className="truncate">
-                    Source —{" "}
-                    <span className="text-amber">{active?.name ?? "CODE.ASM"}</span>
+                <div className="paneltitle flex shrink-0 items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-2 truncate">
+                    <span className="truncate">
+                      Source —{" "}
+                      <span className="text-amber">
+                        {active?.name ?? "CODE.ASM"}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        className="btn btn-icon !px-1.5 !py-1 disabled:opacity-40"
+                        onClick={() => editorRef.current?.undo()}
+                        disabled={!canUndo}
+                        title="Undo"
+                        aria-label="Undo"
+                      >
+                        <IconUndo />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-icon !px-1.5 !py-1 disabled:opacity-40"
+                        onClick={() => editorRef.current?.redo()}
+                        disabled={!canRedo}
+                        title="Redo"
+                        aria-label="Redo"
+                      >
+                        <IconRedo />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-icon !px-1.5 !py-1"
+                        onClick={handleCopyCode}
+                        title="Copy source code"
+                        aria-label="Copy source code"
+                      >
+                        <IconCopy />
+                      </button>
+                    </span>
                   </span>
-                  <span className="flex shrink-0 items-center gap-0.5">
-                    <button
-                      type="button"
-                      className="btn btn-icon !px-1.5 !py-1 disabled:opacity-40"
-                      onClick={() => editorRef.current?.undo()}
-                      disabled={!canUndo}
-                      title="Undo"
-                      aria-label="Undo"
-                    >
-                      <IconUndo />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-icon !px-1.5 !py-1 disabled:opacity-40"
-                      onClick={() => editorRef.current?.redo()}
-                      disabled={!canRedo}
-                      title="Redo"
-                      aria-label="Redo"
-                    >
-                      <IconRedo />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-icon !px-1.5 !py-1"
-                      onClick={handleCopyCode}
-                      title="Copy source code"
-                      aria-label="Copy source code"
-                    >
-                      <IconCopy />
-                    </button>
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  className="shrink-0 text-[10px] text-ink-dim hover:text-amber lg:hidden"
-                  onClick={() => setCpuCollapsed((c) => !c)}
-                >
-                  {cpuCollapsed ? "Show CPU" : "Hide CPU"}
-                </button>
+                  <button
+                    type="button"
+                    className="shrink-0 text-[10px] text-ink-dim hover:text-amber lg:hidden"
+                    onClick={() => setCpuCollapsed((c) => !c)}
+                  >
+                    {cpuCollapsed ? "Show CPU" : "Hide CPU"}
+                  </button>
+                </div>
+                <CodeEditor
+                  ref={editorRef}
+                  source={emu.source}
+                  onChange={updateActiveContent}
+                  currentLine={currentLine}
+                  breakpoints={emu.breakpoints}
+                  onToggleBreakpoint={emu.toggleBreakpoint}
+                  errorLine={errorLine}
+                  errorMessage={errorMessage}
+                  tabSize={tabSize}
+                  wordWrap={wordWrap}
+                  onHistoryChange={({ canUndo: u, canRedo: r }) => {
+                    setCanUndo(u);
+                    setCanRedo(r);
+                  }}
+                />
+                <ErrorBar
+                  message={errorMessage}
+                  onJump={errorLine ? jumpToError : undefined}
+                  source={emu.source}
+                  errorLine={errorLine}
+                />
               </div>
-              <CodeEditor
-                ref={editorRef}
-                source={emu.source}
-                onChange={updateActiveContent}
-                currentLine={currentLine}
-                breakpoints={emu.breakpoints}
-                onToggleBreakpoint={emu.toggleBreakpoint}
-                errorLine={errorLine}
-                errorMessage={errorMessage}
-                tabSize={tabSize}
-                wordWrap={wordWrap}
-                onHistoryChange={({ canUndo: u, canRedo: r }) => {
-                  setCanUndo(u);
-                  setCanRedo(r);
-                }}
-              />
-              <ErrorBar
-                message={errorMessage}
-                onJump={errorLine ? jumpToError : undefined}
-                source={emu.source}
-                errorLine={errorLine}
-              />
-            </div>
 
-            <ResizeHandle direction="vertical" onDrag={onVerticalDrag} />
+              <ResizeHandle direction="vertical" onDrag={onVerticalDrag} />
 
-            <div className="mt-1 flex min-h-[120px] flex-1 flex-col overflow-hidden border-t border-line/40 pt-1">
-              <ConsolePanel
-                machine={machine}
-                waitingForInput={machine?.waitingForInput ?? false}
-                onInput={emu.provideInput}
-                onCopy={handleCopyConsole}
-                theme={emu.theme}
-              />
-            </div>
+              <div className="mt-1 flex min-h-[120px] flex-1 flex-col overflow-hidden border-t border-line/40 pt-1">
+                <ConsolePanel
+                  machine={machine}
+                  waitingForInput={machine?.waitingForInput ?? false}
+                  onInput={emu.provideInput}
+                  onCopy={handleCopyConsole}
+                  theme={emu.theme}
+                />
+              </div>
             </>
           )}
         </div>
@@ -1645,38 +1699,38 @@ export function IdeWorkspace() {
           <ResizeHandle direction="horizontal" onDrag={onHorizontalDrag} />
         </div>
 
-          <div
-            className={`min-h-0 min-w-0 overflow-auto bg-bg ${
-              cpuCollapsed
-                ? "hidden lg:block"
-                : "block max-h-[42vh] lg:max-h-none"
-            }`}
-            style={{ flex: "1 1 auto" }}
-          >
-            <RegisterPanel machine={machine} />
-            <FlagsPanel machine={machine} />
-            <AluPanel machine={machine} />
-            <StatusLine machine={machine} />
-            <WatchPanel machine={machine} />
-            <DataSegmentPanel
-              assembled={assembled}
-              machine={machine}
-              hexBase={emu.hexBase}
-              onHexBaseChange={emu.setHexBase}
-            />
-            <HexDumpPanel
-              assembled={assembled}
-              machine={machine}
-              hexBase={emu.hexBase}
-              onHexBaseChange={emu.setHexBase}
-            />
-            <StackPanels machine={machine} />
-            {isAdsEnabled() ? (
-              <div className="mt-2 hidden border-t border-line px-2 py-2 lg:block">
-                <AdSenseUnit slot={AD_SLOTS.banner2} compact />
-              </div>
-            ) : null}
-          </div>
+        <div
+          className={`min-h-0 min-w-0 overflow-auto bg-bg ${
+            cpuCollapsed
+              ? "hidden lg:block"
+              : "block max-h-[42vh] lg:max-h-none"
+          }`}
+          style={{ flex: "1 1 auto" }}
+        >
+          <RegisterPanel machine={machine} />
+          <FlagsPanel machine={machine} />
+          <AluPanel machine={machine} />
+          <StatusLine machine={machine} />
+          <WatchPanel machine={machine} />
+          <DataSegmentPanel
+            assembled={assembled}
+            machine={machine}
+            hexBase={emu.hexBase}
+            onHexBaseChange={emu.setHexBase}
+          />
+          <HexDumpPanel
+            assembled={assembled}
+            machine={machine}
+            hexBase={emu.hexBase}
+            onHexBaseChange={emu.setHexBase}
+          />
+          <StackPanels machine={machine} />
+          {isAdsEnabled() ? (
+            <div className="mt-2 hidden border-t border-line px-2 py-2 lg:block">
+              <AdSenseUnit slot={AD_SLOTS.banner2} compact />
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <SettingsModal
@@ -1688,6 +1742,8 @@ export function IdeWorkspace() {
         onTabSizeChange={persistTabSize}
         wordWrap={wordWrap}
         onWordWrapChange={persistWordWrap}
+        autoUpdate={autoUpdate}
+        onAutoUpdateChange={persistAutoUpdate}
       />
       <ShareDialog
         open={shareOpen}

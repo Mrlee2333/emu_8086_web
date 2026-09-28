@@ -9,6 +9,15 @@ interface ElectronBridge {
   platform: NodeJS.Platform;
   onMenuAction?: (callback: (action: string) => void) => () => void;
   /**
+   * v1.5.2 — mirror of the small scalar preferences, held by main.
+   * Survives the localStorage wipe that an origin change causes, and is the
+   * only way the main process can read the auto-update preference.
+   */
+  getSettings?: () => Promise<Record<string, string>>;
+  setSettings?: (
+    patch: Record<string, string | null>,
+  ) => Promise<Record<string, string>>;
+  /**
    * v1.4.0 folder workspace — present only inside the Electron shell.
    * The allowed root is main-process state; only relPaths cross the bridge.
    */

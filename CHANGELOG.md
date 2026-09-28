@@ -2,6 +2,70 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.5.2] — 2026-09-28
+
+> Ships after 1.5.1 (the register Details view, PR #14), on top of it.
+
+The macOS app lost its settings and its updater did nothing. Both were reported
+together; they turned out to be two separate bugs, and one of them was hiding
+the other.
+
+### Fixed
+
+- **The desktop app forgot every setting on restart.** The theme, the accent colour, the tab size, the UI scale, your open files, your open tabs, the watch list and the keyboard shortcuts all came back as if you had never set them. The cause was the port, not the settings: the packaged app started its bundled server on a random port each launch, and `localStorage` is keyed by origin — scheme, host **and port** — so every launch was a new origin with an empty store. The opened folder was the one thing that survived, because the main process writes it to `userData` itself; that asymmetry is what gave the bug away. Two fixes, belt and braces: the port is pinned to a small stable set (with the ephemeral port as a last resort), and the scalar preferences are mirrored to `userData` so they survive even that fallback. An update restart was a second deterministic trigger for the same bug, and is fixed by the same change
+- **“Install now” did nothing.** The click worked — it called `quitAndInstall()`, Squirrel launched its installer helper, and the helper exited without installing. On macOS an in-place update is refused when the running app and the update are signed with different identities: the installed build was signed with an Apple Development certificate and the published builds are ad-hoc, because CI sets `CSC_IDENTITY_AUTO_DISCOVERY: false` with no Developer ID configured. The updater's `error` handler was empty, so the failure was invisible — which is why it looked like a dead button. The app now reads its own signature and, when it cannot replace itself in place, offers the download instead of an install that cannot work
+- **Update failures were discarded.** The `error` handler was an empty function and the check promise was `.catch(() => {})`, so every failure — including a GitHub rate limit on a shared network — was silent. Errors are now logged, and shown when the user asked for the check
+- **“Later” did not mean later.** `autoInstallOnAppQuit` was left at its default of `true`, so declining the prompt still installed the update on the next normal quit. It is off now, and nothing is installed without the user choosing to
+- **The update prompt came back on every launch.** The check ran unconditionally 15 seconds after every start, with no way to turn it off and nothing remembered about the previous answer
+- **Switching theme discarded the accent colour.** The settings modal read its stored accent in an effect that depended on the theme, so pressing Dark or Light reset the swatch the instant it changed, throwing away a colour you had chosen
+- **Saving did not close the dialog**, leaving no confirmation that the settings had been applied — the only way to tell was the transient “Settings saved.” line
+
+### Added
+
+- **An Automatic updates setting**, in Settings, on the desktop app only. Off means the app never checks on its own; Help → Check for updates still works. The preference has to reach the main process, which cannot read `localStorage`, so it crosses the new settings bridge
+- **A vendored typeface build.** IBM Plex Sans, IBM Plex Mono and VT323 are now files in the repository rather than a `next/font/google` fetch. That call was a single point of failure on the release path: a transient Google Fonts failure failed the build *after* the tag and the GitHub Release already existed, which is the one state a release cannot be recovered from without moving a published tag. The files are the exact woff2 the Google CSS served, so rendering is unchanged, and the build now passes with the network blocked
+
+### Known limitation
+
+In-place updates on macOS need a Developer ID signature and notarization, which are not configured for these builds. Until they are, the app offers the download. Nothing is broken by this — it is a packaging credential, not a code path.
+
+### Review findings
+
+A review round found seven problems, three of them blocking. All of them were in code that had been *verified not to run* — the reviewer's point that the download fallback, the signature probe and the update prompt were "all unreachable on packaged macOS" was correct, and the tests I had written for them were passing against logic that could never execute.
+
+- **The signature probe never ran.** It called `app.getPath("appPath")`, which is not a valid path name — Electron throws `Failed to get 'appPath' path` for it. The promise resolved to `null` on every launch, so the app never learned it was un-signed and never offered the download. The bundle is now derived from `resourcesPath` instead, which is verified against a real signed `.app`
+- **The "Download the update" button was dead.** It tested `response === 2` against a dialog whose two buttons are indexed 0 and 1, so the one index the dialog can never return was the only one handled. The choice is now resolved by matching the button's *label*, which cannot drift when a button is added, removed or reordered
+- **A failed manual update check showed its error dialog twice**, because `checkForUpdates` both emits an `error` event and rejects its promise and both paths reported it
+- **A Development-signed build was allowed to "Restart now"**, but its identity is not the one the release pipeline publishes, so Squirrel would refuse it exactly as it refused an ad-hoc one. The bar is now a **Developer ID Application** signature specifically
+- **The empty-string skip in the settings mirror was tested with a literal key**, so the real key never carried an empty value and the skip never ran. The test now computes the key, and a second test asserts a real value *is* restored, so "returns nothing" can no longer pass by skipping everything
+- **The font guard missed a dynamic `import()`**, which a bundler resolves statically and so would fetch at build time just the same
+
+Also removed: `installBlocked` took an `appPath` it never read, and the dead `UPDATE_BTN_RESTART` / `UPDATE_BTN_DOWNLOAD` constants that were the button bug.
+
+### Second review round
+
+Nine more findings, and the first was the same class of error as the last round's worst: a test that proved the rule while the rule was never reached.
+
+- **The signature check was inverted, not broken.** `codesign -dv` prints **no `Authority=` line at all** — the first `-v` is consumed as `--verify`, so `-dv` is verbosity zero. Measured on real bundles: `-d` and `-dv` print 0 authority lines, `-dvvv` prints 3. So every build looked ad-hoc, and the app would have blocked the install even on a correctly Developer-ID-signed one. The call now uses `-dvvv`, ad-hoc is detected from `Signature=adhoc` *and* the `flags=0x…(adhoc,…)` bit, and the verbosity lives in an exported constant because a test that only checks what `codesign` prints passes whatever the caller asked for
+- **The test fixtures were invented.** The old ones were labelled as real `codesign` output but contained `Authority=` lines the command cannot emit at that verbosity. They are now captured from two real bundles, and a new test shells out to the real binary and asserts the verbosity the app uses is one that prints the chain
+- **The app told the user a lie.** `checkForUpdatesAndNotify` raises a macOS notification saying the update "will be automatically installed on exit" — which `autoInstallOnAppQuit = false` now prevents. The background check is a plain check, and the prompt is the only thing that speaks
+- **The background check could fire during quit.** The 15 s timer had no handle and no quit guard, so quitting at 10 s still started a network check and possibly a full download on a dying process. It is now cancelled on `before-quit`
+- **A corrupt settings file silently re-enabled updates** for a user who had turned them off, because a non-atomic `writeFileSync` can leave truncated JSON and a failed parse reads as "never chosen". The write is now a temp file plus a rename
+- **Switching theme then saving stored the wrong theme's default accent.** Removing the theme dependency had fixed the opposite bug, so a fresh profile that chose Light saved the *dark* default into a light theme. A chosen accent and a defaulted one are now tracked apart
+- **Automatic updates ignored Cancel**, being the one control in the dialog that applied instantly. It is staged like the rest
+- **An ephemeral fallback port was silent.** All four pinned ports being busy reintroduces the original bug with no signal; the app now says so on stderr, using a helper that was previously exported but never called
+- **The signature probe raced the first update check**, so an update landing in the first second could offer the dead Restart button. The handler now waits for the probe
+
+Also: the hand-rolled `path.resolve` in `bundlePathFrom` was quietly wrong for drive-letter input and is now `node:path`; the README version is current; and this branch is **rebased onto v1.5.1** rather than onto `main`, which removes the four-way version and changelog conflict outright.
+
+### Tests
+
+66 new in total, on top of v1.5.1. The ones that matter most:
+
+- **The renderer and the main process read the same setting identically.** They each carry their own copy of the truthy-value list, because they are separate processes and the main process cannot import TypeScript. A disagreement would mean the settings dialog says “off” while the updater is still on. A table-driven test asserts the two agree on fourteen inputs
+- **Nothing in the updater is verified only against a mock.** The bundle path, the signature parse and the button choice are exercised against a real ad-hoc-signed `.app` built by `electron-builder`, and against real `codesign -dvvv` output read from it
+- **The ephemeral port is last, always**, and a guard that a reintroduced `next/font/google` import is caught by the very rule that checks for it — a test that cannot fail is decoration
+
 ## [1.5.1] — 2026-09-28
 
 ### Added

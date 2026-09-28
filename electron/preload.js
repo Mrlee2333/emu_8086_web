@@ -7,6 +7,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const MENU_CHANNEL = "emu8086web:menu";
+const SETTINGS_CHANNELS = {
+  getSettings: "emu8086web:get-settings",
+  setSettings: "emu8086web:set-settings",
+};
 const FOLDER_CHANNELS = {
   openFolder: "emu8086web:open-folder",
   getFolder: "emu8086web:get-folder",
@@ -27,6 +31,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(MENU_CHANNEL, handler);
     return () => ipcRenderer.removeListener(MENU_CHANNEL, handler);
   },
+  // v1.5.2: a mirror of the small scalar preferences, held by main. The
+  // renderer cannot read it at startup when localStorage was lost to an origin
+  // change, and main cannot read localStorage at all, so both directions cross
+  // here. Only the keys main whitelists are stored.
+  getSettings: () => ipcRenderer.invoke(SETTINGS_CHANNELS.getSettings),
+  setSettings: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.setSettings, patch),
   // Note: the allowed root lives in the main process (userData-persisted).
   // The renderer only sends paths relative to it — never absolute roots.
   openFolder: () =>

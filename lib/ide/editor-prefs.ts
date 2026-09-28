@@ -2,12 +2,26 @@ export const TAB_SIZE_KEY = "emu8086web:tabSize";
 export const WORD_WRAP_KEY = "emu8086web:wordWrap";
 export const ACCENT_KEY = "emu8086web:accent";
 export const FONT_SCALE_KEY = "emu8086web:fontScale";
+/** v1.5.2 — whether the desktop app may check for updates on its own. */
+export const AUTO_UPDATE_KEY = "autoUpdate";
 
 export const DEFAULT_TAB_SIZE = 4;
 export const DEFAULT_ACCENT_DARK = "#64d2ff";
 export const DEFAULT_ACCENT_LIGHT = "#b3690a";
+/** v1.5.2 — the desktop app checks by default, as desktop apps do. */
+export const DEFAULT_AUTO_UPDATE = true;
 
 export type TabSize = 2 | 4 | 8;
+
+/** The small scalar preferences, mirrored to the main process on the desktop. */
+export const MIRRORED_KEYS = [
+  "emu8086web:theme",
+  ACCENT_KEY,
+  TAB_SIZE_KEY,
+  WORD_WRAP_KEY,
+  FONT_SCALE_KEY,
+  AUTO_UPDATE_KEY,
+] as const;
 
 export function loadTabSize(): TabSize {
   if (typeof window === "undefined") return DEFAULT_TAB_SIZE;
@@ -69,4 +83,98 @@ export function applyAccent(hex: string | null, theme: "dark" | "light"): void {
 
 export function defaultAccentForTheme(theme: "dark" | "light"): string {
   return theme === "light" ? DEFAULT_ACCENT_LIGHT : DEFAULT_ACCENT_DARK;
+}
+
+/**
+ * Values that mean "yes", matched case-insensitively after trimming.
+ *
+ * Kept identical to `autoUpdateEnabled` in `electron/update-pref.js`; the two
+ * live in different processes and main stays dependency-free plain JS, so the
+ * list is duplicated. `editor-prefs.test.ts` asserts the two agree, because a
+ * disagreement means the settings dialog says "off" while the updater is still
+ * on.
+ */
+const TRUTHY = new Set(["1", "true", "yes", "on"]);
+
+export function loadAutoUpdate(): boolean {
+  if (typeof window === "undefined") return DEFAULT_AUTO_UPDATE;
+  const raw = localStorage.getItem(AUTO_UPDATE_KEY);
+  // Absent means the user never chose. Present but unrecognised is false, so a
+  // user who turned updates off does not get them back from a typo.
+  if (raw === null) return DEFAULT_AUTO_UPDATE;
+  return TRUTHY.has(raw.trim().toLowerCase());
+}
+
+/* ------------------------------------------------------------------ *
+ * Main-process mirror (v1.5.2)
+ *
+ * The desktop app used to lose every preference on restart, because the
+ * bundled server bound a random port and localStorage is keyed by origin. The
+ * port is pinned now, so this is a safety net rather than the main mechanism —
+ * but it is also the *only* way the main process can read a preference, since
+ * it has no access to the renderer's localStorage. The auto-update setting
+ * depends on that.
+ *
+ * Every function is a no-op in the browser and never throws: preferences are
+ * not worth failing a page load over.
+ * ------------------------------------------------------------------ */
+
+function bridge(): ElectronBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.electronAPI;
+}
+
+export function isDesktop(): boolean {
+  return Boolean(bridge()?.isElectron?.());
+}
+
+/**
+ * Push the current preferences to the main process.
+ *
+ * Reads them from localStorage rather than taking them as an argument so the
+ * call sites cannot drift from what is actually stored.
+ */
+export async function mirrorPrefs(): Promise<void> {
+  const api = bridge();
+  if (!api?.setSettings || typeof localStorage === "undefined") return;
+  const patch: Record<string, string | null> = {};
+  for (const key of MIRRORED_KEYS) {
+    patch[key] = localStorage.getItem(key);
+  }
+  try {
+    await api.setSettings(patch);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Repopulate localStorage from the main process where it is empty.
+ *
+ * Only fills gaps. A value already in localStorage is the one the user set in
+ * this origin, and is never overwritten. Returns the keys it restored so the
+ * caller can apply them.
+ */
+export async function restoreMirroredPrefs(): Promise<string[]> {
+  const api = bridge();
+  if (!api?.getSettings || typeof localStorage === "undefined") return [];
+  let stored: Record<string, string>;
+  try {
+    stored = await api.getSettings();
+  } catch {
+    return [];
+  }
+  const restored: string[] = [];
+  for (const key of MIRRORED_KEYS) {
+    const value = stored?.[key];
+    if (typeof value !== "string" || value === "") continue;
+    if (localStorage.getItem(key) !== null) continue;
+    try {
+      localStorage.setItem(key, value);
+      restored.push(key);
+    } catch {
+      /* quota or denied storage */
+    }
+  }
+  return restored;
 }
