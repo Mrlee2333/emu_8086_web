@@ -2,6 +2,34 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.5.3] — 2026-09-28
+> Ships on top of 1.5.2 (the macOS settings and updater fixes, PR #15), which
+> carries 1.5.1 (the register Details view, PR #14) with it. The viewer
+> extends the Details view, so this branch was rebased onto 1.5.2 once that
+> was reviewed and re-measured.
+
+
+### Added
+
+- **Extended value viewer** — the original emu8086 window, rebuilt in this app's own theme. The two bytes of one register are shown in hex, binary and octal, each read on its own as unsigned decimal, signed decimal and a character; the register itself is shown in hex and binary, and read as unsigned and signed. It splits by width rather than by base, because that is the thing worth showing: octal stops at the byte, which is the width it is any use at, and a six-digit octal word is a number nobody computes by hand. The 8086's "Watch" dropdown is kept, so one window covers all thirteen registers rather than thirteen copies of the same table
+- **Two ways in.** An "Extended value" button in the CPU registers panel header opens it on AX, and an `i` on every row of the Details table opens it on *that* register. A row is the one place all thirteen registers are named at once, which is where the wish to explain one of them in full actually arises
+- **A register with no halves says so.** SI, DI, BP, SP, the four segments and IP are 16-bit only, so the byte rows are left out and the 16-bit readings stay — a screen of six dashes is a screen of nothing, and a fabricated `AH` would name a register the CPU cannot read
+
+### Changed
+
+- **The character row reads CP437, not ASCII.** The original viewer calls that row ASCII, but a byte above 7Fh is not ASCII, and this emulator's console already draws 0A3h as `ú` on the screen directly above it. Reading the byte as Latin-1 would have shown a control code where the program the student is stepping shows a character. A byte with no glyph of its own is named the way the character map already names it — `cret` for CR, `null` for zero, `spa` for space — so the cell is never blank, which would read as a value that is missing
+- **Opening the viewer from the Details table closes that table.** Two modal backdrops stacked on one another both listen for Escape, so the key that should dismiss the top window would have taken the one under it too
+
+### Correctness
+
+- 19 new tests. The character row is checked against what `dosByteToPrintable` would draw for the same byte across 0x80h–0FEh, so the viewer and the console cannot drift apart; the halves are checked against `Machine.get8` after `MUL` (both widths), `XLAT`, and a `MOV AH,1` that leaves AL alone — the instructions where a split reading the wrong end of the word would still pass a test that set both halves at once
+- Octal is checked at the boundaries rather than the middle: 0x3Fh is the last byte whose octal ends in 7 and 0x40h the first that carries, which is where a conversion that gets every other value right would be caught
+- Two test expectations were wrong when written and the emulator was right, so they were corrected against it rather than the other way round: byte `MUL` overwrites AL with the remainder, so `200 × 3` leaves AL = 88 and not 200; and 0A3Dh puts 0Dh in AL, not in AH
+
+### Known limitation
+
+- The viewer reads registers only. The Watch panel can already evaluate an arbitrary expression — `count`, `[si]`, `byte ptr [bx]` — and its results would feed this table directly, but the two are not joined yet, because a `Watch` dropdown that listed both registers and expressions would no longer be the emu8086 window this is reproducing
+
 ## [1.5.2] — 2026-09-28
 
 > Ships after 1.5.1 (the register Details view, PR #14), on top of it.

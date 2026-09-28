@@ -15,6 +15,7 @@ import {
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { DialogShell } from "@/components/ide/dialog-shell";
 import { IconCopy } from "@/components/ide/editor-icons";
+import { ValueViewer } from "@/components/ide/value-viewer";
 
 interface ConsolePanelProps {
   machine: Machine | null;
@@ -287,8 +288,15 @@ function RegStrip({
  * high byte and low byte in their own columns, and a dash where a register has
  * neither. It answers "what is in this register" at a glance, which is why the
  * per-register descriptions live behind the `i` buttons in the panel instead.
+ *
+ * Each row carries its own `i` (v1.5.3), which opens the Extended Value Viewer
+ * on that register — the row is the one place every register is named at once,
+ * so it is the natural place to want one of them explained in full.
  */
-function RegisterDetails({ machine }: RegisterPanelProps) {
+function RegisterDetails({
+  machine,
+  onInspect,
+}: RegisterPanelProps & { onInspect: (name: string) => void }) {
   const views = describeRegisters(machine?.reg ?? EMPTY_REGS, machine?.ip ?? 0);
   const curInstr =
     machine && !machine.halted && machine.a.instrs[machine.ip]
@@ -322,8 +330,19 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
           <span className="font-mono text-sm text-green">
             {v.low ? v.low.hex : "—"}
           </span>
-          <span className="text-right font-mono text-xs text-ink-dim">
-            {v.hex} · {v.dec}
+          <span className="flex items-baseline justify-end gap-2">
+            <span className="font-mono text-xs text-ink-dim">
+              {v.hex} · {v.dec}
+            </span>
+            <button
+              type="button"
+              onClick={() => onInspect(v.name)}
+              title={`${v.name} in hex, binary, octal and decimal`}
+              aria-label={`Extended value viewer for ${v.name}`}
+              className="font-mono text-[11px] leading-none text-ink-dim/60 hover:text-amber"
+            >
+              i
+            </button>
           </span>
         </div>
       ))}
@@ -345,6 +364,11 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
 
 export function RegisterPanel({ machine }: RegisterPanelProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Which register the Extended Value Viewer is open on, or null when it is
+  // shut. The details dialog and the panel header both open it, and both hand
+  // the name over, so the viewer opens on the register that was asked about
+  // rather than always on the first one.
+  const [viewing, setViewing] = useState<string | null>(null);
   const [detail, setDetail] = useState<RegDetail>(null);
   const views = describeRegisters(machine?.reg ?? EMPTY_REGS, machine?.ip ?? 0);
   // A miss here means a name below has drifted from `describeRegisters`, which
@@ -367,20 +391,42 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
       d?.name === name && d.show === show ? null : { name, show },
     );
 
+  /**
+   * Open the viewer on one register.
+   *
+   * The details dialog closes on the way, because two modal backdrops stacked
+   * on each other both listen for Esc and would close together — the Escape
+   * that should dismiss the top window would take the one under it too.
+   */
+  const inspect = (name: string) => {
+    setDetailsOpen(false);
+    setViewing(name);
+  };
+
   return (
     <>
       <CollapsibleSection
         title="CPU registers"
         storageKey="cpu-registers"
         action={
-          <button
-            type="button"
-            className="text-[10px] text-ink-dim hover:text-amber"
-            onClick={() => setDetailsOpen(true)}
-            title="Every register with its high and low byte"
-          >
-            Details
-          </button>
+          <span className="flex items-center gap-2.5">
+            <button
+              type="button"
+              className="text-[10px] text-ink-dim hover:text-amber"
+              onClick={() => inspect("AX")}
+              title="One register in hex, binary, octal and decimal"
+            >
+              Extended value
+            </button>
+            <button
+              type="button"
+              className="text-[10px] text-ink-dim hover:text-amber"
+              onClick={() => setDetailsOpen(true)}
+              title="Every register with its high and low byte"
+            >
+              Details
+            </button>
+          </span>
         }
       >
         <div className="grid grid-cols-4 gap-px bg-line">
@@ -424,8 +470,16 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
           subtitle="Every register with the high and low byte it is made of."
           panelClassName="max-w-md"
         >
-          <RegisterDetails machine={machine} />
+          <RegisterDetails machine={machine} onInspect={inspect} />
         </DialogShell>
+      )}
+
+      {viewing && (
+        <ValueViewer
+          views={views}
+          initial={viewing}
+          onClose={() => setViewing(null)}
+        />
       )}
     </>
   );

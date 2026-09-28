@@ -1,6 +1,6 @@
 {
   "name": "emu8086web",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": false,
   "description": "Modern browser-based 8086 assembler and step debugger for every platform",
   "author": "Nafis Islam Kabbo",
