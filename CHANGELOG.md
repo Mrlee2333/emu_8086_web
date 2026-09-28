@@ -2,6 +2,55 @@
 
 All notable changes to emu8086web are documented in this file.
 
+## [1.5.1] — 2026-09-28
+
+### Added
+
+- **Register Details view** — the CPU registers panel header now has a Details button that opens the original emu8086 register view: one row per register, with the high byte and low byte in their own columns. `AH`/`AL`, `BH`/`BL`, `CH`/`CL` and `DH`/`DL` are visible at a glance, and a register with no halves (SI, DI, BP, SP, the segments and IP) shows a dash rather than an invented zero
+- **A per-register `i` button** — explains what the 8086 uses that register for, without a word of it on screen until asked
+- **Click a value to see it another way** — the same word in binary, unsigned decimal and signed decimal, with both halves broken out and a printable character noted where the byte is one
+- **Implied operands are named** — the Details dialog says which registers the next instruction touches without its operands saying so, so `MOVSB`'s use of SI, DI and CX stops being invisible
+
+The panel itself is unchanged in shape and still hex-only: the value a program is written in is all that is on screen until a register is asked about.
+
+### Correctness
+
+- 41 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
+- Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
+
+### Changed
+
+- **The IP cell shows the real instruction pointer when the program has halted.** It used to read `0x0000` in that state, which looks like the program had restarted. It now shows where execution actually stopped
+
+### Review findings
+
+Fixed after a review pass. Each was reproduced against the branch first, and each correction is now held by a test that runs the emulator rather than trusting the sentence.
+
+- **A byte's binary was grouped in twos, not fours** — `AH` read `00 10 00 11` instead of `0001 0011`, which looks like four separate values rather than one eight-bit one. The 16-bit grouping was always correct, so no existing test could have caught it
+- **CX was described as the high half of `DX:AX`** — it is DX. CX is the count that `LOOP` and `REP` drive and the shift count in a form like `SHL AX, CL`. A test now asserts that word `MUL` leaves CX untouched
+- **`CBW` and `CWD` were described as touching registers they do not** — `CBW` sign-extends `AL` into `AX` and writes nothing to `DX`; only `CWD` fills `DX`; and neither touches `CX`. A test runs both and checks all three registers
+- **Every string-instruction note claimed it decrements CX** — it only does under `REP`. A plain `MOVSB` leaves CX alone, and a test now runs both forms to prove the difference
+- **BX was described as the implicit base of the string instructions** — they move through SI and DI. BX's real implicit use is the table index `XLAT` reads through as `[BX + AL]`, and a test asserts a string op leaves BX untouched
+- **"only IRET restores the instruction pointer" was false** — `RET` pops the same target. A `CALL`/`RET` test proves the program returns and ends rather than falling through
+- **`AAD` was described as a packed-BCD instruction** — it combines an unpacked tens-and-ones pair, and is the inverse of `AAM`. Packed BCD is what `DAA` and `DAS` adjust
+- **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
+- **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
+- A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
+
+### Second review round
+
+Another pass over the same sentences found four more that were wrong, plus the highest-impact defect of the release: the panel was dropping the `REP` prefix.
+
+- **The `REP` prefix was dropped and the note then contradicted it.** `Next: MOVSB — … once — CX only moves under REP` was shown for a `REP MOVSB` about to run five times, and for `REPE`/`REPNE` the rule that stops them early was never mentioned at all. The prefix is now shown and the note describes the prefixed behaviour
+- **`IMUL` was described as writing to `DX:AX`**, which only the one-operand form does; the two- and three-operand forms this emulator implements write to the first operand
+- **AX was called "the destination of most arithmetic"** — every arithmetic and logic instruction here writes to its first operand, so AX moves only where the program names it
+- **CS was described as the segment `PUSH`, `CALL` and the interrupts take from**, but nothing here writes CS: `PUSH` stores two bytes with no segment, and `INT` pushes nothing
+- **IP was described as replaced by an interrupt**; in this flat model `INT` runs its service and carries on at the next instruction
+- **`XLATB`, `LOOPE` and `LOOPNE` had no note** and fell through to a sentence claiming their operands named everything they touch. MASM programs are as likely to use those spellings as the short ones
+- **The panel showed `SP` as 0 before the first compile**, then jumped to `0xFFFE`, which is what a real machine starts at
+- **The panel and the dialog did not share a register order.** A comment claimed they did; each held its own literals, which is how they came to disagree once already. The orders are exported and the panel maps them
+- **Two tests proved less than their names claimed.** "LOOP's counter is CX" ran `dec cx`, and the `RET` test asserted only `err === null && halted === true`, which also holds when `RET` jumps to a garbage address. Both now check the actual return address and counter
+
 ## [1.5.0] — 2026-09-28
 
 ### Fixed
