@@ -9,9 +9,12 @@ import { THEME_KEY } from "@/lib/emulator";
 import {
   ACCENT_KEY,
   applyAccent,
+  AUTO_UPDATE_KEY,
   defaultAccentForTheme,
   FONT_SCALE_KEY,
+  isDesktop,
   loadAccent,
+  mirrorPrefs,
   TAB_SIZE_KEY,
   type TabSize,
   WORD_WRAP_KEY,
@@ -29,6 +32,8 @@ interface SettingsModalProps {
   onTabSizeChange: (size: TabSize) => void;
   wordWrap: boolean;
   onWordWrapChange: (wrap: boolean) => void;
+  autoUpdate: boolean;
+  onAutoUpdateChange: (enabled: boolean) => void;
 }
 
 export function SettingsModal({
@@ -40,30 +45,43 @@ export function SettingsModal({
   onTabSizeChange,
   wordWrap,
   onWordWrapChange,
+  autoUpdate,
+  onAutoUpdateChange,
 }: SettingsModalProps) {
   const [fontScale, setFontScale] = useState(100);
   const [accent, setAccent] = useState(defaultAccentForTheme(theme));
-  const [saved, setSaved] = useState(false);
+  const onDesktop = isDesktop();
 
+  // Read the stored preferences once per open, deferred so the first client
+  // paint matches the server. `theme` is deliberately not a dependency: the
+  // effect used to re-run on a theme change and reset the accent swatch the
+  // instant Dark or Light was pressed, discarding a colour the user had
+  // chosen. Switching theme leaves a chosen accent alone, which is what the
+  // Reset button is for.
   useEffect(() => {
     if (!open) return;
     queueMicrotask(() => {
       const scale = localStorage.getItem(FONT_SCALE_KEY);
       if (scale) setFontScale(Number(scale) || 100);
-      const stored = loadAccent();
-      setAccent(stored ?? defaultAccentForTheme(theme));
+      setAccent(loadAccent() ?? defaultAccentForTheme(theme));
     });
-  }, [open, theme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read once per open
+  }, [open]);
 
-  const save = () => {
+  const save = async () => {
     localStorage.setItem(FONT_SCALE_KEY, String(fontScale));
     document.documentElement.style.fontSize = `${fontScale}%`;
     localStorage.setItem(TAB_SIZE_KEY, String(tabSize));
     localStorage.setItem(WORD_WRAP_KEY, wordWrap ? "1" : "0");
     localStorage.setItem(ACCENT_KEY, accent);
+    localStorage.setItem(AUTO_UPDATE_KEY, autoUpdate ? "1" : "0");
     applyAccent(accent, theme);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    // The main process cannot read localStorage, so the desktop app's copy has
+    // to be told. A failure here must not stop the settings being applied.
+    await mirrorPrefs();
+    // Close on save: the dialog staying open leaves the user unsure whether
+    // the settings were applied at all.
+    onClose();
   };
 
   const resetAccent = () => {
@@ -193,10 +211,33 @@ export function SettingsModal({
           />
         </div>
 
+        {onDesktop ? (
+          <div className="flex items-center justify-between gap-3">
+            <label
+              htmlFor="auto-update"
+              className="text-xs tracking-wider text-ink-dim uppercase"
+            >
+              Automatic updates
+            </label>
+            <input
+              id="auto-update"
+              type="checkbox"
+              checked={autoUpdate}
+              onChange={(e) => onAutoUpdateChange(e.target.checked)}
+              className="h-4 w-4 accent-amber"
+            />
+          </div>
+        ) : null}
+        {onDesktop ? (
+          <p className="-mt-3 text-[10px] text-ink-dim">
+            Off means the app never checks on its own. Help → Check for updates
+            still works.
+          </p>
+        ) : null}
+
         <button type="button" className="btn btn-primary w-full" onClick={save}>
           Save settings
         </button>
-        {saved && <p className="text-sm text-green">Settings saved.</p>}
       </section>
 
       <section className="mt-6 border-t border-line pt-5">

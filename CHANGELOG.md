@@ -2,6 +2,7 @@
 
 All notable changes to emu8086web are documented in this file.
 
+<<<<<<< HEAD
 ## [1.5.1] — 2026-09-28
 
 ### Added
@@ -36,6 +37,42 @@ Fixed after a review pass. Each was reproduced against the branch first, and eac
 - **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
 - **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
 - A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
+=======
+## [1.5.2] — 2026-09-28
+
+> Ships after 1.5.1 (the register Details view, PR #14). This branch is cut
+> from `main`, so the 1.5.1 section below appears when that PR merges.
+
+The macOS app lost its settings and its updater did nothing. Both were reported
+together; they turned out to be two separate bugs, and one of them was hiding
+the other.
+
+### Fixed
+
+- **The desktop app forgot every setting on restart.** The theme, the accent colour, the tab size, the UI scale, your open files, your open tabs, the watch list and the keyboard shortcuts all came back as if you had never set them. The cause was the port, not the settings: the packaged app started its bundled server on a random port each launch, and `localStorage` is keyed by origin — scheme, host **and port** — so every launch was a new origin with an empty store. The opened folder was the one thing that survived, because the main process writes it to `userData` itself; that asymmetry is what gave the bug away. Two fixes, belt and braces: the port is pinned to a small stable set (with the ephemeral port as a last resort), and the scalar preferences are mirrored to `userData` so they survive even that fallback. An update restart was a second deterministic trigger for the same bug, and is fixed by the same change
+- **“Install now” did nothing.** The click worked — it called `quitAndInstall()`, Squirrel launched its installer helper, and the helper exited without installing. On macOS an in-place update is refused when the running app and the update are signed with different identities: the installed build was signed with an Apple Development certificate and the published builds are ad-hoc, because CI sets `CSC_IDENTITY_AUTO_DISCOVERY: false` with no Developer ID configured. The updater's `error` handler was empty, so the failure was invisible — which is why it looked like a dead button. The app now reads its own signature and, when it cannot replace itself in place, offers the download instead of an install that cannot work
+- **Update failures were discarded.** The `error` handler was an empty function and the check promise was `.catch(() => {})`, so every failure — including a GitHub rate limit on a shared network — was silent. Errors are now logged, and shown when the user asked for the check
+- **“Later” did not mean later.** `autoInstallOnAppQuit` was left at its default of `true`, so declining the prompt still installed the update on the next normal quit. It is off now, and nothing is installed without the user choosing to
+- **The update prompt came back on every launch.** The check ran unconditionally 15 seconds after every start, with no way to turn it off and nothing remembered about the previous answer
+- **Switching theme discarded the accent colour.** The settings modal read its stored accent in an effect that depended on the theme, so pressing Dark or Light reset the swatch the instant it changed, throwing away a colour you had chosen
+- **Saving did not close the dialog**, leaving no confirmation that the settings had been applied — the only way to tell was the transient “Settings saved.” line
+
+### Added
+
+- **An Automatic updates setting**, in Settings, on the desktop app only. Off means the app never checks on its own; Help → Check for updates still works. The preference has to reach the main process, which cannot read `localStorage`, so it crosses the new settings bridge
+- **A vendored typeface build.** IBM Plex Sans, IBM Plex Mono and VT323 are now files in the repository rather than a `next/font/google` fetch. That call was a single point of failure on the release path: a transient Google Fonts failure failed the build *after* the tag and the GitHub Release already existed, which is the one state a release cannot be recovered from without moving a published tag. The files are the exact woff2 the Google CSS served, so rendering is unchanged, and the build now passes with the network blocked
+
+### Known limitation
+
+In-place updates on macOS need a Developer ID signature and notarization, which are not configured for these builds. Until they are, the app offers the download. Nothing is broken by this — it is a packaging credential, not a code path.
+
+### Tests
+
+29 new. The two that matter most:
+
+- **The renderer and the main process read the same setting identically.** They each carry their own copy of the truthy-value list, because they are separate processes and the main process cannot import TypeScript. A disagreement would mean the settings dialog says “off” while the updater is still on. A table-driven test asserts the two agree on fourteen inputs
+- **The ephemeral port is last, always**, and a guard that a reintroduced `next/font/google` import is caught by the very rule that checks for it — a test that cannot fail is decoration
+>>>>>>> 1ec9e51 (v1.5.2: the desktop app forgets its settings, and the installer does nothing)
 
 ### Second review round
 

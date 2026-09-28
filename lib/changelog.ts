@@ -8,6 +8,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.2",
+    date: "2026-09-28",
+    highlights: [
+      "Fix: the macOS app forgot every setting on restart — the theme, the accent, the tab size, the UI scale, your open files, your open tabs, the watch list and the keyboard shortcuts all came back empty",
+      "Root cause: the desktop app started its bundled server on a random port, and storage is keyed by origin, so every launch was a new origin. The port is now pinned, and the settings are mirrored to disk as a second line of defence",
+      "Fix: “Install now” did nothing — the published builds are not signed with a Developer ID, so the installer refused to replace the app in place and failed silently. The app now detects this and offers the download instead of an install that cannot work",
+      "Fix: update errors are reported instead of discarded, and “Later” means later — an update is no longer installed behind your back on the next quit",
+      "New: an Automatic updates setting, on the desktop app only",
+      "Build: the three typefaces are vendored, so the build no longer depends on Google Fonts. A transient failure there used to fail a release after the tag already existed",
+      "Settings: Save now closes the dialog, and switching theme no longer discards the accent colour you chose",
+      "Tests: 29 new, including one that asserts the renderer and the main process read the update preference identically",
+    ],
+  },
+  {
     version: "1.5.1",
     date: "2026-09-28",
     highlights: [

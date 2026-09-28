@@ -40,10 +40,15 @@ import { isAdsEnabled } from "@/lib/adsense";
 import { isElectronRenderer } from "@/lib/electron/offline";
 import {
   applyAccent,
+  AUTO_UPDATE_KEY,
+  DEFAULT_AUTO_UPDATE,
   FONT_SCALE_KEY,
   loadAccent,
+  loadAutoUpdate,
   loadTabSize,
   loadWordWrap,
+  mirrorPrefs,
+  restoreMirroredPrefs,
   TAB_SIZE_KEY,
   type TabSize,
   WORD_WRAP_KEY,
@@ -117,6 +122,8 @@ export function IdeWorkspace() {
   const [shareOpen, setShareOpen] = useState(false);
   const [tabSize, setTabSize] = useState<TabSize>(4);
   const [wordWrap, setWordWrap] = useState(false);
+  // v1.5.2: desktop-only, and read by the main process rather than the UI.
+  const [autoUpdate, setAutoUpdate] = useState(DEFAULT_AUTO_UPDATE);
   // v1.4.0 folder workspace (VS Code-like explorer + collapsible sidebar).
   const [folderRoot, setFolderRoot] = useState<ExplorerRoot | null>(null);
   const [folderName, setFolderName] = useState("");
@@ -318,9 +325,26 @@ export function IdeWorkspace() {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => {
+    let cancelled = false;
+    // v1.5.2: the desktop app's localStorage can come back empty when the
+    // origin changed between launches, so the main process's mirror is
+    // consulted FIRST and only fills gaps — a value already here is the one
+    // the user set in this origin and is never overwritten.
+    const hydrate = async () => {
+      let restored: string[] = [];
+      try {
+        restored = await restoreMirroredPrefs();
+      } catch {
+        /* best-effort */
+      }
+      if (cancelled) return;
+      if (restored.includes("emu8086web:theme")) {
+        const t = localStorage.getItem("emu8086web:theme");
+        if (t === "light" || t === "dark") emu.applyTheme(t);
+      }
       setTabSize(loadTabSize());
       setWordWrap(loadWordWrap());
+      setAutoUpdate(loadAutoUpdate());
       const scale = localStorage.getItem(FONT_SCALE_KEY);
       if (scale) {
         document.documentElement.style.fontSize = `${Number(scale) || 100}%`;
@@ -335,7 +359,13 @@ export function IdeWorkspace() {
       } catch {
         /* sidebar prefs are best-effort */
       }
-    });
+      // Keep the main process's copy current for the next launch.
+      void mirrorPrefs();
+    };
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefs once on mount
   }, []);
 
@@ -429,11 +459,21 @@ export function IdeWorkspace() {
   const persistTabSize = useCallback((size: TabSize) => {
     setTabSize(size);
     localStorage.setItem(TAB_SIZE_KEY, String(size));
+    void mirrorPrefs();
   }, []);
 
   const persistWordWrap = useCallback((wrap: boolean) => {
     setWordWrap(wrap);
     localStorage.setItem(WORD_WRAP_KEY, wrap ? "1" : "0");
+    void mirrorPrefs();
+  }, []);
+
+  // v1.5.2: the main process is what actually acts on this one, so it is
+  // mirrored as soon as it changes rather than waiting for Save.
+  const persistAutoUpdate = useCallback((enabled: boolean) => {
+    setAutoUpdate(enabled);
+    localStorage.setItem(AUTO_UPDATE_KEY, enabled ? "1" : "0");
+    void mirrorPrefs();
   }, []);
 
   const { machine, assembled, tick } = emu;
@@ -1688,6 +1728,8 @@ export function IdeWorkspace() {
         onTabSizeChange={persistTabSize}
         wordWrap={wordWrap}
         onWordWrapChange={persistWordWrap}
+        autoUpdate={autoUpdate}
+        onAutoUpdateChange={persistAutoUpdate}
       />
       <ShareDialog
         open={shareOpen}

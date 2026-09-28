@@ -15,23 +15,41 @@
  */
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { buildAppMenu, showUpdateError } = require("./menu");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
+const { portCandidates } = require("./port-candidates");
+const {
+  autoUpdateEnabled,
+  installBlocked,
+  parseSignature,
+  shouldCheckInBackground,
+} = require("./update-pref");
 
 const APP_NAME = "emu8086web";
 const REPO_URL = "https://github.com/nafiskabbo/emu_8086_web";
+const RELEASES_URL = `${REPO_URL}/releases/latest`;
 
 const DEV_URL = process.env.ELECTRON_START_URL || "";
 const HEALTH_PATH = "/api/health";
 const START_TIMEOUT_MS = 30000;
 const POLL_INTERVAL_MS = 250;
+const UPDATE_CHECK_DELAY_MS = 15000;
+const UPDATE_BTN_RESTART = 0;
+const UPDATE_BTN_LATER = 1;
+const UPDATE_BTN_DOWNLOAD = 2;
 
 let serverChild = null;
 let mainWindow = null;
 let updaterStarted = false;
+/** Persisted renderer preferences; the source of truth for auto-update. */
+let settings = {};
+/** Set once the app signature is known; null while it is still unknown. */
+let appSignature = null;
+/** True while a user-initiated check is in flight, so errors are shown. */
+let manualCheckPending = false;
 
 function isPackaged() {
   return app.isPackaged;
@@ -57,13 +75,17 @@ function standaloneServerPath() {
   );
 }
 
-/** Resolve a free loopback port, honoring PORT when usable. */
+/**
+ * Resolve a loopback port, preferring one the app has used before.
+ *
+ * The port is part of the renderer's origin, and localStorage is keyed by
+ * origin, so an ephemeral port means every launch starts with empty settings
+ * — the theme, the accent and the open files all silently revert. The pinned
+ * candidates come first and the ephemeral port is the last resort; see
+ * `port-candidates.js` for why, and for the tests.
+ */
 function pickPort() {
-  const fromEnv = Number.parseInt(process.env.PORT || "", 10);
-  const candidates =
-    Number.isInteger(fromEnv) && fromEnv >= 1024 && fromEnv <= 65535
-      ? [fromEnv, 0]
-      : [0];
+  const candidates = portCandidates(process.env.PORT);
   return new Promise((resolve, reject) => {
     const tryNext = () => {
       const want = candidates.shift();
@@ -189,36 +211,111 @@ function getUpdater() {
 }
 
 /**
+ * The app bundle's code signature, read once off the critical path.
+ *
+ * Only macOS has a question here, and only a packaged build has a signature
+ * worth asking about. A failure is not fatal: the app falls back to trying the
+ * install, which is the old behaviour and no worse.
+ */
+function probeAppSignature() {
+  return new Promise((resolve) => {
+    if (process.platform !== "darwin" || !isPackaged()) {
+      resolve(null);
+      return;
+    }
+    execFile(
+      "/usr/bin/codesign",
+      ["-dv", app.getPath("appPath")],
+      { timeout: 5000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          resolve(null);
+          return;
+        }
+        // `codesign -dv` writes its report to stderr, not stdout.
+        const output = `${stdout || ""}\n${stderr || ""}`;
+        resolve(parseSignature(output));
+      },
+    );
+  });
+}
+
+/**
  * Background update check shortly after launch, plus a ready-to-install
- * prompt. Silent on failure — manual checks surface errors instead.
- * Note: on macOS the downloaded update can only auto-install in a properly
- * signed + notarized build; otherwise the user reinstalls from the DMG.
+ * prompt.
+ *
+ * Two things were wrong before v1.5.2 and both are fixed here:
+ *
+ * - The prompt said "Restart now" and led nowhere. On macOS the in-place
+ *   install is applied by Squirrel's ShipIt, which refuses to install over a
+ *   build signed differently from the update. The published builds are
+ *   ad-hoc, so ShipIt launched and exited without installing. When the
+ *   signature says that, the prompt offers the download instead of an install
+ *   that cannot work.
+ * - Nothing was remembered, and `autoInstallOnAppQuit` defaults to true, so
+ *   "Later" installed anyway on the next quit and the prompt returned every
+ *   launch. It is off now, and whether to check at all is the user's setting.
  */
 function setupAutoUpdater() {
   const updater = getUpdater();
   if (!updater || updaterStarted) return;
   updaterStarted = true;
   updater.autoDownload = true;
+  // "Later" has to mean later. With this on, the update is applied on the next
+  // normal quit whether or not the user ever chose to install it.
+  updater.autoInstallOnAppQuit = false;
+
   updater.on("update-downloaded", (info) => {
     const version = info && info.version ? String(info.version) : "new";
+    const blocked = installBlocked({
+      isMac: process.platform === "darwin",
+      isPackaged: isPackaged(),
+      appPath: isPackaged() ? app.getPath("appPath") : null,
+      signature: appSignature,
+    });
+    const buttons = blocked
+      ? ["Download the update", "Later"]
+      : ["Restart now", "Later"];
     dialog
       .showMessageBox(focusedWindow(), {
         type: "info",
-        buttons: ["Restart now", "Later"],
-        defaultId: 0,
+        buttons,
+        defaultId: UPDATE_BTN_LATER,
+        cancelId: UPDATE_BTN_LATER,
         title: "Update ready",
-        message: `${APP_NAME} v${version} downloaded. Restart to install?`,
+        message: blocked
+          ? `${APP_NAME} v${version} is ready, but this build is not signed with a Developer ID, so it cannot replace itself in place.`
+          : `${APP_NAME} v${version} downloaded. Restart to install?`,
+        detail: blocked
+          ? "Download the release and replace the app in /Applications."
+          : undefined,
       })
       .then(({ response }) => {
-        if (response === 0) updater.quitAndInstall();
+        if (blocked && response === UPDATE_BTN_DOWNLOAD) {
+          void shell.openExternal(RELEASES_URL);
+        } else if (!blocked && response === UPDATE_BTN_RESTART) {
+          updater.quitAndInstall();
+        }
       });
   });
-  updater.on("error", () => {
-    /* background check stays silent */
+  updater.on("error", (err) => {
+    // Previously an empty handler, which is why a failed install looked like a
+    // dead button. Only surfaced when the user asked to check.
+    if (manualCheckPending) {
+      manualCheckPending = false;
+      showUpdateError(
+        focusedWindow(),
+        `Update check failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    console.error("[updater]", err);
   });
   setTimeout(() => {
+    if (!shouldCheckInBackground(autoUpdateEnabled(settings), isPackaged())) {
+      return;
+    }
     updater.checkForUpdatesAndNotify().catch(() => {});
-  }, 15000);
+  }, UPDATE_CHECK_DELAY_MS);
 }
 
 /** Menu-driven check with explicit up-to-date / failure dialogs. */
@@ -233,8 +330,11 @@ function manualCheckForUpdates() {
     );
     return;
   }
+  // Let the shared error handler report this one instead of a duplicate path.
+  manualCheckPending = true;
   void updater.checkForUpdates().then(
     ({ updateInfo }) => {
+      manualCheckPending = false;
       const latest =
         updateInfo && updateInfo.version ? String(updateInfo.version) : "";
       const current = app.getVersion();
@@ -252,11 +352,13 @@ function manualCheckForUpdates() {
         });
       }
     },
-    (err) =>
+    (err) => {
+      manualCheckPending = false;
       showUpdateError(
         focusedWindow(),
         `Update check failed: ${err instanceof Error ? err.message : String(err)}`,
-      ),
+      );
+    },
   );
 }
 
@@ -406,6 +508,79 @@ function clearAllowedRoot() {
 }
 
 /**
+ * Preferences that have to survive an origin change.
+ *
+ * The port is pinned now, so localStorage is stable in the normal case, but
+ * it is not guaranteed: if every pinned port is taken the app falls back to an
+ * ephemeral one and the origin changes again. These are mirrored to `userData`
+ * for that case, and because the main process cannot read localStorage at all
+ * — the auto-update preference has to come from somewhere it can reach.
+ *
+ * Deliberately not the whole of localStorage: open files, open tabs and the
+ * watch list are large, and they are fixed by the pinned port rather than
+ * duplicated here.
+ */
+const SETTINGS_KEYS = [
+  "emu8086web:theme",
+  "emu8086web:accent",
+  "emu8086web:tabSize",
+  "emu8086web:wordWrap",
+  "emu8086web:fontScale",
+  "autoUpdate",
+];
+
+function settingsStatePath() {
+  return path.join(app.getPath("userData"), "emu8086web-settings.json");
+}
+
+function persistSettings() {
+  try {
+    const fsSync = require("node:fs");
+    fsSync.mkdirSync(app.getPath("userData"), { recursive: true });
+    fsSync.writeFileSync(
+      settingsStatePath(),
+      JSON.stringify(settings, null, 2),
+      "utf8",
+    );
+  } catch {
+    /* best-effort: a preference is not worth failing the app over */
+  }
+}
+
+function restoreSettings() {
+  try {
+    const parsed = JSON.parse(
+      require("node:fs").readFileSync(settingsStatePath(), "utf8"),
+    );
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      settings = {};
+      for (const key of SETTINGS_KEYS) {
+        const value = parsed[key];
+        if (value === undefined) continue;
+        settings[key] = typeof value === "string" ? value : String(value);
+      }
+    }
+  } catch {
+    /* none stored */
+  }
+}
+
+/** Merge a renderer patch into the stored settings and write them back. */
+function mergeSettings(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return;
+  for (const key of SETTINGS_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+    const value = patch[key];
+    if (value === null || value === undefined) {
+      delete settings[key];
+    } else {
+      settings[key] = typeof value === "string" ? value : String(value);
+    }
+  }
+  persistSettings();
+}
+
+/**
  * Thin wrappers binding the allowed root. The confinement logic itself lives
  * in `electron/folder-resolve.js` so it can be unit-tested — see
  * `electron/folder-resolve.test.ts`.
@@ -476,6 +651,16 @@ function handleTrusted(channel, listener) {
 function registerFolderIpc() {
   if (folderIpcRegistered) return;
   folderIpcRegistered = true;
+
+  // Preference mirror. Read once at startup by the renderer so a lost
+  // localStorage can be repopulated, and written on every change so the main
+  // process can read the auto-update preference — which it cannot do from
+  // localStorage, being a different process with no access to it.
+  handleTrusted("emu8086web:get-settings", async () => ({ ...settings }));
+  handleTrusted("emu8086web:set-settings", async (_e, patch) => {
+    mergeSettings(patch);
+    return { ...settings };
+  });
 
   handleTrusted("emu8086web:open-folder", async () => {
     const res = await dialog.showOpenDialog(focusedWindow() ?? undefined, {
@@ -615,7 +800,13 @@ app.whenReady().then(() => {
     }),
   );
   restoreAllowedRoot();
+  // Before the updater, which reads the auto-update preference out of it.
+  restoreSettings();
   registerFolderIpc();
+  // Off the critical path: the window should not wait on a codesign call.
+  void probeAppSignature().then((info) => {
+    appSignature = info;
+  });
   setupAutoUpdater();
 
   const start = DEV_URL
