@@ -1,6 +1,5 @@
 /** Application version — bump when shipping user-facing features. */
-export const APP_VERSION = "1.5.2";
-
+export const APP_VERSION = "1.5.3";
 
 export const APP_NAME = "emu8086web";
 

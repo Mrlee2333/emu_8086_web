@@ -8,6 +8,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.3",
+    date: "2026-09-28",
+    highlights: [
+      "Extended value viewer: one register in hex, binary and octal, then its high and low byte read on their own as unsigned, signed and a character, then the whole word as unsigned and signed — the original emu8086 window, rebuilt in the app's own dark theme",
+      "Reached two ways: an 'Extended value' button in the CPU registers panel header, and an i on every row of the Details table, which opens the viewer on that register rather than the first one",
+      "A 'Watch' dropdown in the viewer points it at any of the thirteen registers, so one window covers all of them instead of thirteen copies of the same table",
+      "A register with no high and low byte — SI, DI, BP, SP, the segments and IP — shows only its 16-bit readings and says why, rather than six rows of dashes",
+      "Char reads the byte as CP437, the map the console above the registers is already drawing, so 0A3h is the ú the program printed and not a Latin-1 control code; a byte with no glyph of its own is named the way the character map names it",
+      "Tests: 19 new. The load-bearing one checks the character against what the DOS console would print for the same byte, across 0x80h to 0FEh, and the halves against the emulator's own get8 after MUL, XLAT and a MOV that writes one half only",
+    ],
+  },
+  {
     version: "1.5.2",
     date: "2026-09-28",
     highlights: [
