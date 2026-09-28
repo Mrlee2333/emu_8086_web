@@ -371,11 +371,9 @@ describe("codesign, for real", () => {
     return `${r.stdout ?? ""}${r.stderr ?? ""}`;
   }
 
-  it("prints no Authority line at -dv, which is why -dvvv is required", function (this: {
-    skip: () => void;
-  }) {
+  it("prints no Authority line at -dv, which is why -dvvv is required", function () {
     if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
-      return this.skip();
+      return;
     }
     // This is the trap: -dv is verbosity 0 because the first -v is consumed as
     // --verify. Anything matching on Authority at that verbosity always fails.
@@ -391,11 +389,9 @@ describe("codesign, for real", () => {
     );
   });
 
-  it("reads a real ad-hoc bundle as ad-hoc and blocks the install", function (this: {
-    skip: () => void;
-  }) {
+  it("reads a real ad-hoc bundle as ad-hoc and blocks the install", function () {
     if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
-      return this.skip();
+      return;
     }
     const out = read("-dvvv", ELECTRON_BUNDLE);
     const sig = parseSignature(out);
@@ -408,11 +404,9 @@ describe("codesign, for real", () => {
     );
   });
 
-  it("reads a real Developer-signed bundle as not ad-hoc, and still blocks it", function (this: {
-    skip: () => void;
-  }) {
+  it("reads a real Developer-signed bundle as not ad-hoc, and still blocks it", function () {
     if (!isMac || !existsSync(codesign) || !existsSync(DEVELOPER_BUNDLE)) {
-      return this.skip();
+      return;
     }
     const out = read("-dvvv", DEVELOPER_BUNDLE);
     const sig = parseSignature(out);
@@ -430,11 +424,9 @@ describe("codesign, for real", () => {
     assert.match(sig.authority!, /^(Apple|Developer) /);
   });
 
-  it("asks for a verbosity that actually prints the authority chain", function (this: {
-    skip: () => void;
-  }) {
+  it("asks for a verbosity that actually prints the authority chain", function () {
     if (!isMac || !existsSync(codesign) || !existsSync(ELECTRON_BUNDLE)) {
-      return this.skip();
+      return;
     }
     // The check that would have caught the original bug. Everything else here
     // tests codesign's behaviour, which is identical whatever the caller asks
