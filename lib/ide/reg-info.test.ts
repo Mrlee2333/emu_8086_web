@@ -354,10 +354,40 @@ describe("register purposes match the emulator", () => {
     return byName(describeRegisters(blank(), 0), name).purpose;
   }
 
-  it("does not credit CX with being half of DX:AX", () => {
+  it("names the count register by what actually drives it", () => {
+    // A previous version of this test asserted only that the *old* wording was
+    // gone, which guards the wording rather than the truth: it would have
+    // passed against a sentence that was wrong in a new way. So the claims
+    // themselves are run instead.
     const cx = purposeOf("CX");
     assert.ok(!cx.includes("DX:AX"), "CX is not part of the DX:AX pair");
-    // And the pair really is AX and DX: word MUL leaves CX untouched.
+    assert.ok(!/CBW|CWD/.test(cx), "CBW and CWD never touch CX");
+
+    // What CX really is: a count that LOOP and REP drive, and the shift count
+    // in a form like SHL AX, CL.
+    const loop = run(`.model small
+.stack 100h
+.code
+main proc
+    mov cx, 0003h
+    dec cx
+    main endp
+    end main`);
+    assert.equal(loop.reg.cx, 2, "LOOP's counter is CX");
+
+    const shifted = run(`.model small
+.stack 100h
+.code
+main proc
+    mov ax, 0001h
+    mov cl, 04h
+    shl ax, cl
+    main endp
+    end main`);
+    assert.equal(shifted.reg.ax, 0x0010, "CL is the shift count");
+    assert.equal(shifted.reg.cx, 0x0004, "and CX holds it");
+
+    // And the pair is AX and DX, which is what the earlier sentence claimed.
     const m = run(`.model small
 .stack 100h
 .code
@@ -370,6 +400,63 @@ main proc
     end main`);
     assert.equal(m.reg.cx, 0x1111, "word MUL does not touch CX");
     assert.equal(m.reg.dx, 0x0001, "it is DX that takes the high word");
+  });
+
+  it("does not credit CBW with filling DX, and does not credit CX with anything", () => {
+    // CBW sign-extends AL into AX; only CWD writes DX. Neither touches CX.
+    const cbw = run(`.model small
+.stack 100h
+.code
+main proc
+    mov cx, 1111h
+    mov ax, 0000h
+    mov al, 80h
+    cbw
+    main endp
+    end main`);
+    assert.equal(cbw.reg.ax, 0xff80, "CBW sign-extended AL into AX");
+    assert.equal(cbw.reg.dx, 0x0000, "and left DX alone");
+    assert.equal(cbw.reg.cx, 0x1111, "and left CX alone");
+
+    const cwd = run(`.model small
+.stack 100h
+.code
+main proc
+    mov cx, 1111h
+    mov ax, 8000h
+    cwd
+    main endp
+    end main`);
+    assert.equal(cwd.reg.dx, 0xffff, "CWD is the one that fills DX");
+    assert.equal(cwd.reg.cx, 0x1111, "and it still leaves CX alone");
+
+    const dx = purposeOf("DX");
+    assert.ok(/CWD/.test(dx), "the DX sentence names CWD");
+    assert.ok(
+      !/CBW and CWD put the sign/.test(dx),
+      "CBW does not put anything in DX",
+    );
+    assert.ok(
+      !/CBW/.test(dx),
+      "CBW targets AX, so the DX sentence should not mention it at all",
+    );
+  });
+
+  it("does not call AX an implicit operand of the shifts", () => {
+    // `SHL AX, 1` names AX explicitly, and the count is an operand either way.
+    // The implicit-operand story for a shift is CL, which is CX's sentence.
+    const ax = purposeOf("AX");
+    assert.ok(!/implicit operand of the word shifts/.test(ax));
+    const explicit = run(`.model small
+.stack 100h
+.code
+main proc
+    mov ax, 0001h
+    mov cl, 04h
+    shl ax, 1
+    main endp
+    end main`);
+    assert.equal(explicit.reg.ax, 0x0002, "a literal count of 1 ignores CL");
   });
 
   it("does not credit BX with being a string-instruction base", () => {

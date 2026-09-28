@@ -73,10 +73,10 @@ const GENERAL_ORDER: readonly Reg16Name[] = [
 const SEGMENT_ORDER: readonly Reg16Name[] = ["ds", "es", "ss", "cs"];
 
 const PURPOSE: Record<Reg16Name | "ip", string> = {
-  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the implicit operand of the word shifts, XLAT, IN and OUT, and the destination of most arithmetic.",
+  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the register XLAT indexes with, the target of CBW, and the destination of most arithmetic.",
   bx: "Base. The base register of an effective address, and the table index XLAT reads through as [BX + AL]. The string instructions do not use it: they move through SI and DI.",
-  cx: "Count. The loop count for LOOP and REP, the shift count for 8- and 16-bit shifts, and the low half of the CBW and CWD sign-extension pair.",
-  dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, the port number for IN and OUT, and where CBW and CWD put the sign of AX.",
+  cx: "Count. The loop count for LOOP, the repeat count for REP, and the shift count in a form like SHL AX, CL.",
+  dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, the register CWD fills with the sign of AX, and the port an IN or OUT names when it is written as DX.",
   si: "Source index. The source offset of the string instructions, and an index register in an effective address.",
   di: "Destination index. The destination offset of the string instructions, and an index register in an effective address.",
   bp: "Base pointer. The base of a stack-relative address; unlike the other pointers it addresses through SS by default.",
