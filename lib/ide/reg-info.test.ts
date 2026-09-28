@@ -647,6 +647,20 @@ main proc
       0xaaaa,
       "five operations on other registers left AX alone",
     );
+    // The sentence also credits CBW with widening AL into AX. That is the one
+    // way AX moves without being named as a destination operand, so it is the
+    // clause that has to stay true — "target of CBW" was earlier wording that
+    // read as an implicit destination and contradicted the sentence after it.
+    const cbw = run(`.model small
+.stack 100h
+.code
+main proc
+    mov ax, 1234h
+    cbw
+    main endp
+    end main`);
+    assert.equal(cbw.get8("al"), 0x34, "CBW left AL alone");
+    assert.equal(cbw.reg.ax, 0x0034, "and widened it into AX");
   });
 
   it("describes the two- and three-operand IMUL forms, which do not use DX:AX", () => {

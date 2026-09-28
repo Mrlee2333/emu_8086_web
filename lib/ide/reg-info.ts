@@ -79,7 +79,7 @@ export const GENERAL_ORDER: readonly Reg16Name[] = [
 export const SEGMENT_ORDER: readonly Reg16Name[] = ["ds", "es", "ss", "cs"];
 
 const PURPOSE: Record<Reg16Name | "ip", string> = {
-  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the register XLAT indexes with, and the target of CBW. It is a destination only where you name it — every arithmetic and logic instruction here writes to its first operand, so AX moves when the program says AX.",
+  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, and the index XLAT reads the table through. CBW widens AL into it. It is otherwise a destination only where the program names it, because every arithmetic and logic instruction here writes to its first operand.",
   bx: "Base. The base register of an effective address, and the table index XLAT reads through as [BX + AL]. The string instructions do not use it: they move through SI and DI.",
   cx: "Count. The loop count for LOOP, the repeat count for REP, and the shift count in a form like SHL AX, CL.",
   dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, the register CWD fills with the sign of AX, and the port an IN or OUT names when it is written as DX.",
