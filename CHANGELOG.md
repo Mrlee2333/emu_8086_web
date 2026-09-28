@@ -15,7 +15,7 @@ The panel itself is unchanged in shape and still hex-only: the value a program i
 
 ### Correctness
 
-- 30 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
+- 41 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
 - Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
 
 ### Changed
@@ -36,6 +36,20 @@ Fixed after a review pass. Each was reproduced against the branch first, and eac
 - **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
 - **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
 - A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
+
+### Second review round
+
+Another pass over the same sentences found four more that were wrong, plus the highest-impact defect of the release: the panel was dropping the `REP` prefix.
+
+- **The `REP` prefix was dropped and the note then contradicted it.** `Next: MOVSB — … once — CX only moves under REP` was shown for a `REP MOVSB` about to run five times, and for `REPE`/`REPNE` the rule that stops them early was never mentioned at all. The prefix is now shown and the note describes the prefixed behaviour
+- **`IMUL` was described as writing to `DX:AX`**, which only the one-operand form does; the two- and three-operand forms this emulator implements write to the first operand
+- **AX was called "the destination of most arithmetic"** — every arithmetic and logic instruction here writes to its first operand, so AX moves only where the program names it
+- **CS was described as the segment `PUSH`, `CALL` and the interrupts take from**, but nothing here writes CS: `PUSH` stores two bytes with no segment, and `INT` pushes nothing
+- **IP was described as replaced by an interrupt**; in this flat model `INT` runs its service and carries on at the next instruction
+- **`XLATB`, `LOOPE` and `LOOPNE` had no note** and fell through to a sentence claiming their operands named everything they touch. MASM programs are as likely to use those spellings as the short ones
+- **The panel showed `SP` as 0 before the first compile**, then jumped to `0xFFFE`, which is what a real machine starts at
+- **The panel and the dialog did not share a register order.** A comment claimed they did; each held its own literals, which is how they came to disagree once already. The orders are exported and the panel maps them
+- **Two tests proved less than their names claimed.** "LOOP's counter is CX" ran `dec cx`, and the `RET` test asserted only `err === null && halted === true`, which also holds when `RET` jumps to a garbage address. Both now check the actual return address and counter
 
 ## [1.5.0] — 2026-09-28
 

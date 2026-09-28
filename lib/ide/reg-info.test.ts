@@ -3,12 +3,20 @@
  * Run: bun test lib
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { assemble } from "@/lib/emulator/assemble";
 import { createMachine } from "@/lib/emulator/machine";
 import type { Machine } from "@/lib/emulator/machine";
 import type { Reg16Name, Registers } from "@/lib/emulator/types";
-import { describeRegisters, instructionNote } from "./reg-info";
+import {
+  describeRegisters,
+  GENERAL_ORDER,
+  instructionNote,
+  prefixedInstructionNote,
+  SEGMENT_ORDER,
+} from "./reg-info";
 
 function blank(): Registers {
   return {
@@ -62,6 +70,29 @@ describe("describeRegisters", () => {
       "CS",
       "IP",
     ]);
+  });
+
+  it("exports the display order the panel lays its cells out from", () => {
+    // The panel used to hold its own copy of these names, which is how it and
+    // the dialog came to disagree about the segment order with nothing failing.
+    // It now maps the exported lists, and this pins the mapping to the dialog's
+    // order so a change to one cannot silently miss the other.
+    assert.deepEqual(
+      GENERAL_ORDER.map((n) => n.toUpperCase()),
+      ["AX", "BX", "CX", "DX", "SI", "DI", "BP", "SP"],
+    );
+    assert.deepEqual(
+      [...SEGMENT_ORDER, "ip"].map((n) => n.toUpperCase()),
+      ["DS", "ES", "SS", "CS", "IP"],
+    );
+    // And the dialog is built from exactly those two lists, in that sequence.
+    const fromLists = [...GENERAL_ORDER, ...SEGMENT_ORDER, "ip"].map((n) =>
+      n.toUpperCase(),
+    );
+    assert.deepEqual(
+      fromLists,
+      describeRegisters(blank(), 0).map((v) => v.name),
+    );
   });
 
   it("gives a purpose sentence to every register", () => {
@@ -364,16 +395,27 @@ describe("register purposes match the emulator", () => {
     assert.ok(!/CBW|CWD/.test(cx), "CBW and CWD never touch CX");
 
     // What CX really is: a count that LOOP and REP drive, and the shift count
-    // in a form like SHL AX, CL.
+    // in a form like SHL AX, CL. The previous version of this ran `dec cx`,
+    // which proves DEC decrements CX and not that LOOP is driven by it.
     const loop = run(`.model small
 .stack 100h
 .code
 main proc
     mov cx, 0003h
-    dec cx
-    main endp
+again:
+    add bx, 0001h
+    loop again
+    mov ah, 4ch
+    int 21h
+main endp
     end main`);
-    assert.equal(loop.reg.cx, 2, "LOOP's counter is CX");
+    assert.equal(loop.err, null, "the LOOP ran to completion");
+    assert.equal(loop.reg.cx, 0, "LOOP counted CX down to zero on its own");
+    assert.equal(
+      loop.reg.bx,
+      3,
+      "and the body ran three times, so CX really was the counter",
+    );
 
     const shifted = run(`.model small
 .stack 100h
@@ -489,24 +531,159 @@ main proc
   it("does not say only IRET restores the instruction pointer", () => {
     const ip = purposeOf("IP");
     assert.ok(!ip.includes("only IRET"), "RET restores IP as well");
-    // And RET really does: a CALL/RET pair returns and the program finishes.
-    const m = run(`.model small
+
+    // `err === null && halted === true` is not evidence of a correct RET: a RET
+    // that lands on a garbage address past the end of the instruction list
+    // halts the same way and would pass. So the return *address* is checked, by
+    // running a CALL/RET pair with a known target and proving the line after the
+    // call is the one that runs next.
+    const m = createMachine(
+      assemble(`.model small
 .stack 100h
 .code
 main proc
     call sub1
+    mov bx, 4242h
     mov ah, 4ch
     int 21h
 sub1 proc
     ret
 sub1 endp
-end main`);
-    assert.equal(m.err, null, "CALL then RET completed");
-    assert.equal(
-      m.halted,
-      true,
-      "and the run ended rather than falling through",
+end main`),
     );
+    const at = m.a.instrs.findIndex(
+      (i) => i.op === "mov" && i.args[1] === "4242h",
+    );
+    assert.ok(at > 0, "found the instruction after the call");
+
+    let guard = 0;
+    while (!m.halted && !m.err && m.ip !== at && guard++ < 50) m.step();
+    assert.equal(m.err, null, "nothing errored on the way");
+    // Execution reached the instruction after CALL, which is only possible if
+    // RET popped the right return address off the stack.
+    assert.equal(m.ip, at, "RET returned to the instruction after CALL");
+    assert.equal(m.reg.bx, 0, "and had not yet run the instruction there");
+
+    // And a RET that popped garbage would not land there.
+    while (!m.halted && !m.err && guard++ < 200) m.step();
+    assert.equal(
+      m.reg.bx,
+      0x4242,
+      "execution continued normally after the return",
+    );
+  });
+
+  it("does not claim an interrupt replaces the instruction pointer", () => {
+    const ip = purposeOf("IP");
+    assert.ok(
+      !/call or interrupt replaces it/.test(ip),
+      "INT carries on at the following instruction here",
+    );
+    // Proven by running one: IP ends up on the instruction after the INT.
+    const m = run(`.model small
+.stack 100h
+.code
+main proc
+    mov ah, 02h
+    mov dl, 58h
+    int 21h
+    mov bx, 1111h
+    mov ah, 4ch
+    int 21h
+main endp
+end main`);
+    assert.ok(m.output.includes("X"), "the interrupt ran its service");
+    assert.equal(m.reg.bx, 0x1111, "and execution carried on past it");
+  });
+
+  it("does not claim CS is written by PUSH, CALL or the interrupts", () => {
+    const cs = purposeOf("CS");
+    assert.ok(
+      !/PUSH, CALL and the interrupts take from/.test(cs),
+      "nothing here writes CS",
+    );
+    // CS is read-only in this flat model, so it must still read 0 afterwards.
+    const m = run(`.model small
+.stack 100h
+.code
+main proc
+    mov sp, 3000h
+    push ax
+    call sub1
+    mov ah, 02h
+    mov dl, 58h
+    int 21h
+sub1 proc
+    ret
+sub1 endp
+end main`);
+    assert.equal(m.reg.cs, 0, "CS is never written by any of those");
+    assert.equal(
+      m.reg.sp,
+      0x2ffe,
+      "PUSH and CALL moved the stack twice, two bytes each",
+    );
+  });
+
+  it("does not call AX the destination of most arithmetic", () => {
+    // Every arithmetic and logic op here writes to its first operand, so AX
+    // only moves when the program names it.
+    const ax = purposeOf("AX");
+    assert.ok(!/destination of most arithmetic/.test(ax));
+    const m = run(`.model small
+.stack 100h
+.code
+main proc
+    mov ax, 0AAAAh
+    add bx, 5
+    sub cx, 10h
+    and di, 0Fh
+    or si, 80h
+    xor bp, 55h
+    main endp
+    end main`);
+    assert.equal(
+      m.reg.ax,
+      0xaaaa,
+      "five operations on other registers left AX alone",
+    );
+  });
+
+  it("describes the two- and three-operand IMUL forms, which do not use DX:AX", () => {
+    const note = instructionNote("imul")!;
+    assert.ok(note.includes("DX:AX"), "the one-operand form does");
+    assert.ok(
+      /first operand/.test(note),
+      "and the multi-operand forms write to the first operand, not DX:AX",
+    );
+    const m = run(`.model small
+.stack 100h
+.code
+main proc
+    mov bx, 5
+    imul bx, 7
+    main endp
+    end main`);
+    assert.equal(m.reg.bx, 0x0023, "IMUL BX,7 wrote into BX");
+    assert.equal(m.reg.ax, 0, "and left AX alone");
+    assert.equal(m.reg.dx, 0, "and left DX alone");
+  });
+
+  it("has notes for both spellings of XLAT and of the LOOP variants", () => {
+    // MASM programs are as likely to write XLATB or LOOPE as the short form,
+    // and only one spelling having a key meant the other fell through to a
+    // sentence claiming its operands named everything it touched.
+    for (const op of ["xlat", "xlatb"]) {
+      assert.ok(instructionNote(op), `${op} needs a note`);
+    }
+    for (const op of ["loopz", "loope"]) {
+      assert.match(instructionNote(op)!, /ZF is set/, op);
+    }
+    for (const op of ["loopnz", "loopne"]) {
+      assert.match(instructionNote(op)!, /ZF is clear/, op);
+    }
+    // And the ones the emulator implements but that name no register.
+    assert.ok(instructionNote("xlatb")!.includes("[BX + AL]"));
   });
 
   it("distinguishes AAD and AAM from the packed-BCD adjust instructions", () => {
@@ -620,12 +797,151 @@ describe("instructionNote", () => {
 
   it("describes only instructions the emulator actually runs", () => {
     // A note for an op with no case in the interpreter would promise something
-    // the emulator cannot do, which is worse than no note.
-    const implemented = instructionNote("retf");
-    assert.equal(
-      implemented,
-      null,
-      "RETF is not implemented, so it gets no note",
+    // the emulator cannot do, which is worse than no note. Both directions are
+    // checked, against the interpreter's own source rather than a hand-kept
+    // list — a single `retf` check missed XLATB and LOOPE, which are implemented
+    // and have no note, and both fall through to a false sentence.
+    const source = readFileSync(
+      fileURLToPath(new URL("../emulator/machine.ts", import.meta.url)),
+      "utf8",
     );
+    const implemented = new Set(
+      [...source.matchAll(/case "([a-z0-9]+)":/g)].map((m) => m[1]!),
+    );
+    assert.ok(implemented.size > 60, "the case labels were not found");
+
+    // Every string op the emulator runs, including the REP variants, has a
+    // note under its own spelling.
+    for (const op of [
+      "movsb",
+      "movsw",
+      "stosb",
+      "stosw",
+      "lodsb",
+      "lodsw",
+      "cmpsb",
+      "cmpsw",
+      "scasb",
+      "scasw",
+    ]) {
+      assert.ok(implemented.has(op), `${op} should be implemented`);
+      assert.ok(instructionNote(op), `${op} should have a note`);
+    }
+    // Aliases that share a case label still need their own key.
+    for (const alias of ["xlatb", "loope", "loopne"]) {
+      assert.ok(implemented.has(alias), `${alias} should be implemented`);
+      assert.ok(instructionNote(alias), `${alias} should have its own note`);
+    }
+    // An op that is not implemented gets no note.
+    assert.equal(instructionNote("retf"), null, "RETF is not implemented");
+    assert.equal(instructionNote("bswap"), null);
+  });
+
+  it("gives every note-bearing op that the emulator implements a sensible note", () => {
+    // The reverse direction, as a sweep: anything with a note should be an op
+    // the emulator can run, so a note can never describe something absent.
+    const source = readFileSync(
+      fileURLToPath(new URL("../emulator/machine.ts", import.meta.url)),
+      "utf8",
+    );
+    const implemented = new Set(
+      [...source.matchAll(/case "([a-z0-9]+)":/g)].map((m) => m[1]!),
+    );
+    const noted = [
+      "movsb",
+      "movsw",
+      "stosb",
+      "stosw",
+      "lodsb",
+      "lodsw",
+      "cmpsb",
+      "cmpsw",
+      "scasb",
+      "scasw",
+      "xlat",
+      "xlatb",
+      "mul",
+      "imul",
+      "div",
+      "idiv",
+      "aaa",
+      "aas",
+      "daa",
+      "das",
+      "aam",
+      "aad",
+      "cbw",
+      "cwd",
+      "lahf",
+      "sahf",
+      "xchg",
+      "in",
+      "out",
+      "loop",
+      "loopz",
+      "loopnz",
+      "loope",
+      "loopne",
+      "jcxz",
+      "pushf",
+      "popf",
+      "int",
+      "iret",
+      "les",
+      "lds",
+      "lea",
+    ];
+    for (const op of noted) {
+      assert.ok(instructionNote(op), `${op} has no note`);
+      assert.ok(implemented.has(op), `${op} is not implemented but has a note`);
+    }
+  });
+});
+
+describe("prefixedInstructionNote", () => {
+  it("says nothing extra when there is no prefix", () => {
+    assert.equal(
+      prefixedInstructionNote("movsb"),
+      instructionNote("movsb"),
+      "an unprefixed op must read exactly as the bare note",
+    );
+  });
+
+  it("does not attach the bare 'once' wording to a REP instruction", () => {
+    // The bug: the panel dropped the prefix and then attached a note asserting
+    // the instruction runs once, to a MOVSB about to run five times.
+    const bare = instructionNote("movsb")!;
+    const repped = prefixedInstructionNote("movsb", "rep")!;
+    assert.ok(bare.includes("once"), "the bare note is about a single pass");
+    assert.ok(
+      !repped.includes("once"),
+      "a REP note must not claim a single pass",
+    );
+    assert.ok(repped.includes("CX times"), "it should say it repeats");
+  });
+
+  it("names which flag ends REPE and REPNE early", () => {
+    assert.match(
+      prefixedInstructionNote("cmpsb", "repe")!,
+      /ZF/,
+      "REPE stops when ZF is set",
+    );
+    assert.match(
+      prefixedInstructionNote("scasb", "repne")!,
+      /ZF/,
+      "REPNE stops when ZF is clear",
+    );
+    assert.match(prefixedInstructionNote("movsb", "repne")!, /up to CX times/);
+    // Wording has to read as a sentence, not "sets clears ZF".
+    for (const p of ["rep", "repe", "repne"]) {
+      const text = prefixedInstructionNote("movsb", p)!;
+      assert.ok(!/sets clears/.test(text), `awkward wording for ${p}: ${text}`);
+      assert.ok(text.endsWith("zero") || text.endsWith("ZF"), p);
+    }
+  });
+
+  it("still returns null for an op with nothing implicit, prefix or not", () => {
+    assert.equal(prefixedInstructionNote("mov"), null);
+    assert.equal(prefixedInstructionNote("mov", "rep"), null);
   });
 });

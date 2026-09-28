@@ -7,7 +7,9 @@ import { hex4 } from "@/lib/emulator";
 import { flagsToWord } from "@/lib/emulator/flags";
 import {
   describeRegisters,
-  instructionNote,
+  GENERAL_ORDER,
+  prefixedInstructionNote,
+  SEGMENT_ORDER,
   type RegView,
 } from "@/lib/ide/reg-info";
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
@@ -138,6 +140,13 @@ interface RegisterPanelProps {
   machine: Machine | null;
 }
 
+/**
+ * What the panel shows before anything is assembled.
+ *
+ * SP is 0xFFFE rather than 0 because that is what a real machine starts at
+ * (`machine.ts` seeds it so), and the panel shows 0xFFFE the moment anything is
+ * compiled — showing 0 until then made the value appear to jump for no reason.
+ */
 const EMPTY_REGS: Registers = {
   ax: 0,
   bx: 0,
@@ -146,7 +155,7 @@ const EMPTY_REGS: Registers = {
   si: 0,
   di: 0,
   bp: 0,
-  sp: 0,
+  sp: 0xfffe,
   ds: 0,
   es: 0,
   ss: 0,
@@ -285,7 +294,11 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
     machine && !machine.halted && machine.a.instrs[machine.ip]
       ? machine.a.instrs[machine.ip]
       : null;
-  const note = curInstr ? instructionNote(curInstr.op) : null;
+  // The prefix is part of what will happen, and the bare note says the
+  // opposite for a prefixed string op, so it goes in here.
+  const note = curInstr
+    ? prefixedInstructionNote(curInstr.op, curInstr.rep)
+    : null;
 
   return (
     <div>
@@ -317,7 +330,8 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
       {curInstr ? (
         <p className="mt-3 border-t border-line pt-3 text-[11px] leading-snug text-ink-dim">
           <b className="text-amber">
-            Next: {curInstr.op.toUpperCase()}
+            Next: {curInstr.rep ? curInstr.rep.toUpperCase() + " " : ""}
+            {curInstr.op.toUpperCase()}
             {curInstr.args.length
               ? ` ${curInstr.args.join(", ").toUpperCase()}`
               : ""}
@@ -341,8 +355,12 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
     if (!v) throw new Error(`reg-info: no register named "${n}"`);
     return v;
   };
-  const gp = ["AX", "BX", "CX", "DX", "SI", "DI", "BP", "SP"] as const;
-  const seg = ["DS", "ES", "SS", "CS", "IP"] as const;
+  // The panel's cell order comes from the same lists the dialog is built from,
+  // so the two cannot show the registers in different sequences.
+  const gp = GENERAL_ORDER.map((n: string) => n.toUpperCase());
+  const seg = [...SEGMENT_ORDER, "ip" as const].map((n: string) =>
+    n.toUpperCase(),
+  );
 
   const toggle = (name: string, show: "info" | "value") =>
     setDetail((d) =>

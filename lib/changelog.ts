@@ -15,7 +15,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Every register now has an i button saying what the 8086 uses it for, and clicking its value opens the same word in binary, decimal and signed, with both halves broken out",
       "The panel stays hex-only by default: the value a program is written in is all that is on screen until a register is asked about",
       "The Details dialog names the registers the next instruction uses without its operands saying so, so MOVSB's use of SI, DI and CX is no longer invisible",
-      "Tests: 20 new, of which the important ones check the high and low byte against the emulator's own reader after MUL, DIV, XLAT, AAM and AAD — the instructions where the two bytes mean different things and a swapped half would still pass a simpler test",
+      "Tests: 41 new, of which the important ones check the high and low byte against the emulator's own reader after MUL, DIV, XLAT, AAM and AAD — the instructions where the two bytes mean different things and a swapped half would still pass a simpler test",
     ],
   },
   {

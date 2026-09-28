@@ -54,7 +54,13 @@ export type RegView = {
   low: RegByteView | null;
 };
 
-const GENERAL_ORDER: readonly Reg16Name[] = [
+/**
+ * Display order of the general registers, exported because the compact panel
+ * lays its cells out from this list rather than keeping its own copy. An
+ * earlier version had the panel and the dialog each holding literals, which is
+ * how they came to disagree about the segment order with nothing failing.
+ */
+export const GENERAL_ORDER: readonly Reg16Name[] = [
   "ax",
   "bx",
   "cx",
@@ -66,14 +72,14 @@ const GENERAL_ORDER: readonly Reg16Name[] = [
 ];
 
 /**
- * The segment order, matching the compact panel and the original emu8086
- * register view: DS, ES, SS, CS. The dialog and the panel read from the same
- * list, so they cannot drift apart — which they did when this was CS-first.
+ * Display order of the segment registers, matching the original emu8086
+ * register view: DS, ES, SS, CS. Exported for the same reason as
+ * `GENERAL_ORDER`: the panel and the dialog read this one list.
  */
-const SEGMENT_ORDER: readonly Reg16Name[] = ["ds", "es", "ss", "cs"];
+export const SEGMENT_ORDER: readonly Reg16Name[] = ["ds", "es", "ss", "cs"];
 
 const PURPOSE: Record<Reg16Name | "ip", string> = {
-  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the register XLAT indexes with, the target of CBW, and the destination of most arithmetic.",
+  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the register XLAT indexes with, and the target of CBW. It is a destination only where you name it — every arithmetic and logic instruction here writes to its first operand, so AX moves when the program says AX.",
   bx: "Base. The base register of an effective address, and the table index XLAT reads through as [BX + AL]. The string instructions do not use it: they move through SI and DI.",
   cx: "Count. The loop count for LOOP, the repeat count for REP, and the shift count in a form like SHL AX, CL.",
   dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, the register CWD fills with the sign of AX, and the port an IN or OUT names when it is written as DX.",
@@ -81,11 +87,11 @@ const PURPOSE: Record<Reg16Name | "ip", string> = {
   di: "Destination index. The destination offset of the string instructions, and an index register in an effective address.",
   bp: "Base pointer. The base of a stack-relative address; unlike the other pointers it addresses through SS by default.",
   sp: "Stack pointer. The offset of the top of the stack in SS. A PUSH decrements it by two before writing, a POP increments it after reading.",
-  cs: "Code segment. The segment the instruction pointer is measured from, and the segment PUSH, CALL and the interrupts take from.",
+  cs: "Code segment. The segment the instruction pointer is measured from. This model has one flat segment, so it reads 0 and no instruction here writes it: a PUSH moves the stack pointer and stores two bytes, with no segment alongside.",
   ds: "Data segment. The default segment for a data reference; an effective address uses the override prefix to name a different one.",
   ss: "Stack segment. The segment SP addresses through, and the default for a reference based on BP or SP.",
   es: "Extra segment. The destination segment of the string instructions, which is why it cannot be overridden by a prefix.",
-  ip: "Instruction pointer. The offset in CS of the next instruction. A jump, call or interrupt replaces it; RET and IRET restore it from the stack.",
+  ip: "Instruction pointer. The offset in CS of the next instruction. A jump or a call replaces it, and RET restores it from the stack. An interrupt does not: INT runs its service and carries on at the following instruction.",
 };
 
 function hex2(value: number): string {
@@ -195,6 +201,54 @@ export function instructionNote(op: string): string | null {
   return IMPLICIT[op.toLowerCase()] ?? null;
 }
 
+/**
+ * The note for an instruction *including* its REP prefix.
+ *
+ * `instructionNote` describes a bare `MOVSB`, and says so ("once — CX only
+ * moves under REP"). Attaching that to a `REP MOVSB` that is about to run five
+ * times states the opposite of what is about to happen, and the panel used to
+ * drop the prefix entirely while keeping the note. So the prefixed form gets its
+ * own wording, and the ZF-termination of REPE/REPNE is spelled out because that
+ * is the part a beginner cannot see.
+ *
+ * @param op lowercase instruction name
+ * @param rep the prefix the assembler recorded, if any
+ * @returns a sentence, or null when the operands already say everything
+ */
+export function prefixedInstructionNote(
+  op: string,
+  rep?: string,
+): string | null {
+  const base = instructionNote(op);
+  if (!rep) return base;
+  // REP only means something to the string instructions. Handing a repeat
+  // sentence to anything else would be inventing behaviour, so fall through to
+  // the bare note instead.
+  if (!STRING_OPS.has(op.toLowerCase())) return base;
+  const repeat = rep.toUpperCase();
+  if (repeat === "REP") {
+    return "runs the whole instruction CX times, stepping SI or DI each time and counting CX down to zero";
+  }
+  // repe/repne also stop early on the flags, which is their whole point.
+  return repeat === "REPE"
+    ? "runs the instruction up to CX times, stopping early when the comparison sets ZF"
+    : "runs the instruction up to CX times, stopping early when the comparison clears ZF";
+}
+
+/** The instructions REP can prefix. */
+const STRING_OPS = new Set([
+  "movsb",
+  "movsw",
+  "stosb",
+  "stosw",
+  "lodsb",
+  "lodsw",
+  "cmpsb",
+  "cmpsw",
+  "scasb",
+  "scasw",
+]);
+
 const IMPLICIT: Record<string, string> = {
   movsb:
     "copies a byte from [SI] to [DI] and steps both, once — CX only moves under REP",
@@ -213,8 +267,9 @@ const IMPLICIT: Record<string, string> = {
   cmpsw:
     "compares [SI] with [DI] and steps both, once — CX only moves under REP",
   xlat: "reads the table byte at [BX + AL] into AL",
+  xlatb: "reads the table byte at [BX + AL] into AL",
   mul: "multiplies AL by a byte into AX, or AX by a word into DX:AX",
-  imul: "multiplies signed AL into AX, or signed AX into DX:AX",
+  imul: "one operand multiplies signed AL into AX, or signed AX into DX:AX; the two- and three-operand forms multiply into the first operand instead",
   div: "divides AX by a byte into AL and AH, or DX:AX by a word into AX and DX",
   idiv: "divides signed AX into AL and AH, or signed DX:AX into AX and DX",
   aaa: "adjusts AL after a BCD addition, folding the carry into AH",
@@ -233,6 +288,8 @@ const IMPLICIT: Record<string, string> = {
   loop: "decrements CX and jumps while it is not zero",
   loopz: "decrements CX and jumps while it is not zero and ZF is set",
   loopnz: "decrements CX and jumps while it is not zero and ZF is clear",
+  loope: "decrements CX and jumps while it is not zero and ZF is set",
+  loopne: "decrements CX and jumps while it is not zero and ZF is clear",
   jcxz: "jumps when CX is zero, without touching it",
   pushf: "pushes the flags word onto the stack",
   popf: "pops a word into the flags",
