@@ -60,7 +60,7 @@ Also: the hand-rolled `path.resolve` in `bundlePathFrom` was quietly wrong for d
 
 ### Tests
 
-66 new in total. The ones that matter most:
+66 new in total, on top of v1.5.1. The ones that matter most:
 
 - **The renderer and the main process read the same setting identically.** They each carry their own copy of the truthy-value list, because they are separate processes and the main process cannot import TypeScript. A disagreement would mean the settings dialog says “off” while the updater is still on. A table-driven test asserts the two agree on fourteen inputs
 - **Nothing in the updater is verified only against a mock.** The bundle path, the signature parse and the button choice are exercised against a real ad-hoc-signed `.app` built by `electron-builder`, and against real `codesign -dvvv` output read from it
