@@ -5,7 +5,11 @@ import type { Machine } from "@/lib/emulator/machine";
 import type { Registers } from "@/lib/emulator/types";
 import { hex4 } from "@/lib/emulator";
 import { flagsToWord } from "@/lib/emulator/flags";
-import { describeRegisters, instructionNote, type RegView } from "@/lib/ide/reg-info";
+import {
+  describeRegisters,
+  instructionNote,
+  type RegView,
+} from "@/lib/ide/reg-info";
 import { CollapsibleSection } from "@/components/ide/collapsible-section";
 import { DialogShell } from "@/components/ide/dialog-shell";
 import { IconCopy } from "@/components/ide/editor-icons";
@@ -88,9 +92,7 @@ export function ConsolePanel({
           }}
         >
           {output || (
-            <span className="text-[var(--console-fg)] opacity-40">
-              Ready.
-            </span>
+            <span className="text-[var(--console-fg)] opacity-40">Ready.</span>
           )}
           <span className="crt-cursor" />
         </div>
@@ -137,12 +139,28 @@ interface RegisterPanelProps {
 }
 
 const EMPTY_REGS: Registers = {
-  ax: 0, bx: 0, cx: 0, dx: 0, si: 0, di: 0, bp: 0, sp: 0,
-  ds: 0, es: 0, ss: 0, cs: 0,
+  ax: 0,
+  bx: 0,
+  cx: 0,
+  dx: 0,
+  si: 0,
+  di: 0,
+  bp: 0,
+  sp: 0,
+  ds: 0,
+  es: 0,
+  ss: 0,
+  cs: 0,
 };
 
 /** What the strip under the grid is showing. */
 type RegDetail = { name: string; show: "info" | "value" } | null;
+
+/**
+ * How a cell sizes its value. The general registers are the ones a program
+ * reads most and are set larger; segments and IP are supporting detail.
+ */
+type RegTone = "gp" | "seg";
 
 /**
  * One register cell: name, hex, an `i` that explains the register, and the
@@ -163,7 +181,7 @@ function RegCell({
   active: RegDetail;
   onInfo: () => void;
   onValue: () => void;
-  tone: string;
+  tone: RegTone;
 }) {
   const isInfo = active?.name === view.name && active.show === "info";
   const isValue = active?.name === view.name && active.show === "value";
@@ -201,7 +219,15 @@ function RegCell({
 }
 
 /** The one row under the grid: a register's purpose, or its other readings. */
-function RegStrip({ view, show, onClose }: { view: RegView; show: "info" | "value"; onClose: () => void }) {
+function RegStrip({
+  view,
+  show,
+  onClose,
+}: {
+  view: RegView;
+  show: "info" | "value";
+  onClose: () => void;
+}) {
   return (
     <div className="flex items-start gap-2 border-b border-line bg-panel-2/50 px-3 py-2">
       <div className="min-w-0 flex-1 text-[11px] leading-snug">
@@ -220,12 +246,14 @@ function RegStrip({ view, show, onClose }: { view: RegView; show: "info" | "valu
             <span>
               {view.high.name} 0x{view.high.hex} ({view.high.dec}
               {view.high.signed < 0 ? `/${view.high.signed}` : ""}
-              {view.high.printable ? ` ${view.high.printable}` : ""})
+              {view.high.printable ? ` ${view.high.printable}` : ""}){" "}
+              {view.high.binary}
             </span>
             <span>
               {view.low.name} 0x{view.low.hex} ({view.low.dec}
               {view.low.signed < 0 ? `/${view.low.signed}` : ""}
-              {view.low.printable ? ` ${view.low.printable}` : ""})
+              {view.low.printable ? ` ${view.low.printable}` : ""}){" "}
+              {view.low.binary}
             </span>
           </div>
         ) : null}
@@ -272,7 +300,9 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
           key={v.name}
           className="grid grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,2fr)] items-baseline gap-x-3 border-b border-line/50 py-1 last:border-b-0"
         >
-          <span className="font-mono text-sm font-semibold text-ink">{v.name}</span>
+          <span className="font-mono text-sm font-semibold text-ink">
+            {v.name}
+          </span>
           <span className="font-mono text-sm text-green">
             {v.high ? v.high.hex : "—"}
           </span>
@@ -287,9 +317,10 @@ function RegisterDetails({ machine }: RegisterPanelProps) {
       {curInstr ? (
         <p className="mt-3 border-t border-line pt-3 text-[11px] leading-snug text-ink-dim">
           <b className="text-amber">
-            Next:{" "}
-            {curInstr.op.toUpperCase()}
-            {curInstr.args.length ? ` ${curInstr.args.join(", ").toUpperCase()}` : ""}
+            Next: {curInstr.op.toUpperCase()}
+            {curInstr.args.length
+              ? ` ${curInstr.args.join(", ").toUpperCase()}`
+              : ""}
           </b>
           {note ? ` — ${note}.` : " — its operands name everything it touches."}
         </p>
@@ -302,12 +333,21 @@ export function RegisterPanel({ machine }: RegisterPanelProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detail, setDetail] = useState<RegDetail>(null);
   const views = describeRegisters(machine?.reg ?? EMPTY_REGS, machine?.ip ?? 0);
-  const byName = (n: string) => views.find((v) => v.name === n)!;
+  // A miss here means a name below has drifted from `describeRegisters`, which
+  // is a bug in this file rather than a runtime state. Saying so beats a `!`
+  // that throws somewhere further down with no useful context.
+  const byName = (n: string) => {
+    const v = views.find((x) => x.name === n);
+    if (!v) throw new Error(`reg-info: no register named "${n}"`);
+    return v;
+  };
   const gp = ["AX", "BX", "CX", "DX", "SI", "DI", "BP", "SP"] as const;
   const seg = ["DS", "ES", "SS", "CS", "IP"] as const;
 
   const toggle = (name: string, show: "info" | "value") =>
-    setDetail((d) => (d?.name === name && d.show === show ? null : { name, show }));
+    setDetail((d) =>
+      d?.name === name && d.show === show ? null : { name, show },
+    );
 
   return (
     <>
@@ -391,7 +431,15 @@ const FLAG_MEANINGS: Record<
 export function FlagsPanel({ machine }: RegisterPanelProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const f = machine?.flags ?? {
-    CF: 0, PF: 0, AF: 0, ZF: 0, SF: 0, TF: 0, IF: 1, DF: 0, OF: 0,
+    CF: 0,
+    PF: 0,
+    AF: 0,
+    ZF: 0,
+    SF: 0,
+    TF: 0,
+    IF: 1,
+    DF: 0,
+    OF: 0,
   };
   const names = ["CF", "PF", "AF", "ZF", "SF", "TF", "IF", "DF", "OF"] as const;
   const word = flagsToWord(f);
@@ -412,24 +460,24 @@ export function FlagsPanel({ machine }: RegisterPanelProps) {
           </button>
         }
       >
-      <div className="flex flex-wrap gap-2.5 border-b border-line bg-panel px-3.5 py-2.5">
-        {names.map((n) => (
-          <div
-            key={n}
-            className={`flex items-center gap-1.5 text-[11.5px] ${f[n] ? "text-ink" : "text-ink-dim"}`}
-          >
-            <span
-              className="inline-block h-2 w-2 rounded-full border"
-              style={{
-                background: f[n] ? "var(--led-on)" : "var(--led-off)",
-                borderColor: f[n] ? "var(--led-on)" : "var(--line)",
-                boxShadow: f[n] ? "0 0 6px var(--led-on)" : "none",
-              }}
-            />
-            {n}
-          </div>
-        ))}
-      </div>
+        <div className="flex flex-wrap gap-2.5 border-b border-line bg-panel px-3.5 py-2.5">
+          {names.map((n) => (
+            <div
+              key={n}
+              className={`flex items-center gap-1.5 text-[11.5px] ${f[n] ? "text-ink" : "text-ink-dim"}`}
+            >
+              <span
+                className="inline-block h-2 w-2 rounded-full border"
+                style={{
+                  background: f[n] ? "var(--led-on)" : "var(--led-off)",
+                  borderColor: f[n] ? "var(--led-on)" : "var(--line)",
+                  boxShadow: f[n] ? "0 0 6px var(--led-on)" : "none",
+                }}
+              />
+              {n}
+            </div>
+          ))}
+        </div>
       </CollapsibleSection>
 
       {detailsOpen && (
@@ -441,7 +489,11 @@ export function FlagsPanel({ machine }: RegisterPanelProps) {
         >
           <p className="font-mono text-xs text-ink-dim">
             FLAGS = {hex4(word)} ·{" "}
-            {word.toString(2).padStart(16, "0").replace(/(.{4})/g, "$1 ").trim()}
+            {word
+              .toString(2)
+              .padStart(16, "0")
+              .replace(/(.{4})/g, "$1 ")
+              .trim()}
           </p>
           <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {names.map((n) => (
@@ -489,11 +541,14 @@ export function StatusLine({ machine }: RegisterPanelProps) {
         <span>
           Current line →{" "}
           <b className="text-amber">
-            {curInstr ? `line ${curInstr.ln} — ${curInstr.op.toUpperCase()}` : "halted"}
+            {curInstr
+              ? `line ${curInstr.ln} — ${curInstr.op.toUpperCase()}`
+              : "halted"}
           </b>
         </span>
         <span>
-          Instructions executed: <b className="text-amber">{machine?.steps ?? 0}</b>
+          Instructions executed:{" "}
+          <b className="text-amber">{machine?.steps ?? 0}</b>
         </span>
       </div>
     </CollapsibleSection>

@@ -18,6 +18,24 @@ The panel itself is unchanged in shape and still hex-only: the value a program i
 - 20 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
 - Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
 
+### Changed
+
+- **The IP cell shows the real instruction pointer when the program has halted.** It used to read `0x0000` in that state, which looks like the program had restarted. It now shows where execution actually stopped
+
+### Review findings
+
+Fixed after a review pass. Each was reproduced against the branch first, and each correction is now held by a test that runs the emulator rather than trusting the sentence.
+
+- **A byte's binary was grouped in twos, not fours** — `AH` read `00 10 00 11` instead of `0001 0011`, which looks like four separate values rather than one eight-bit one. The 16-bit grouping was always correct, so no existing test could have caught it
+- **CX was described as the high half of `DX:AX`** — it is DX. CX is the loop and shift count, and the low half of the `CBW`/`CWD` pair. A test now asserts that word `MUL` leaves CX untouched
+- **Every string-instruction note claimed it decrements CX** — it only does under `REP`. A plain `MOVSB` leaves CX alone, and a test now runs both forms to prove the difference
+- **BX was described as the implicit base of the string instructions** — they move through SI and DI. BX's real implicit use is the table index `XLAT` reads through as `[BX + AL]`, and a test asserts a string op leaves BX untouched
+- **"only IRET restores the instruction pointer" was false** — `RET` pops the same target. A `CALL`/`RET` test proves the program returns and ends rather than falling through
+- **`AAD` was described as a packed-BCD instruction** — it combines an unpacked tens-and-ones pair, and is the inverse of `AAM`. Packed BCD is what `DAA` and `DAS` adjust
+- **`LES` and `LDS` were described as reading `[SI]`** — `[SI]` is the textbook operand, not a requirement; both accept any memory operand, and a test runs `LES SI, [BX]`
+- **The Details dialog listed the segments in a different order from the panel.** Both now read one order, the one the panel has always used, and a test pins it
+- A test message said "AAD folded AH\*10 + AH's remainder into AL"; it is AH × 10 + AL
+
 ## [1.5.0] — 2026-09-28
 
 ### Fixed

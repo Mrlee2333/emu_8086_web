@@ -65,13 +65,18 @@ const GENERAL_ORDER: readonly Reg16Name[] = [
   "sp",
 ];
 
-const SEGMENT_ORDER: readonly Reg16Name[] = ["cs", "ds", "ss", "es"];
+/**
+ * The segment order, matching the compact panel and the original emu8086
+ * register view: DS, ES, SS, CS. The dialog and the panel read from the same
+ * list, so they cannot drift apart — which they did when this was CS-first.
+ */
+const SEGMENT_ORDER: readonly Reg16Name[] = ["ds", "es", "ss", "cs"];
 
 const PURPOSE: Record<Reg16Name | "ip", string> = {
-  ax: "Accumulator. The implicit operand of MUL, DIV, the word forms of the shifts, XLAT, IN and OUT, and the destination of most arithmetic.",
-  bx: "Base. The base register of an effective address, and the implicit base of the string instructions.",
-  cx: "Count. The loop count for LOOP and REP, the shift count for 8- and 16-bit shifts, and the high half of the DX:AX pair for word MUL and DIV.",
-  dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, and the port number for IN and OUT.",
+  ax: "Accumulator. One half of the DX:AX pair that MUL, DIV, IMUL and IDIV use, the implicit operand of the word shifts, XLAT, IN and OUT, and the destination of most arithmetic.",
+  bx: "Base. The base register of an effective address, and the table index XLAT reads through as [BX + AL]. The string instructions do not use it: they move through SI and DI.",
+  cx: "Count. The loop count for LOOP and REP, the shift count for 8- and 16-bit shifts, and the low half of the CBW and CWD sign-extension pair.",
+  dx: "Data. The other half of the DX:AX pair for word MUL, DIV, IDIV and IMUL, the port number for IN and OUT, and where CBW and CWD put the sign of AX.",
   si: "Source index. The source offset of the string instructions, and an index register in an effective address.",
   di: "Destination index. The destination offset of the string instructions, and an index register in an effective address.",
   bp: "Base pointer. The base of a stack-relative address; unlike the other pointers it addresses through SS by default.",
@@ -80,7 +85,7 @@ const PURPOSE: Record<Reg16Name | "ip", string> = {
   ds: "Data segment. The default segment for a data reference; an effective address uses the override prefix to name a different one.",
   ss: "Stack segment. The segment SP addresses through, and the default for a reference based on BP or SP.",
   es: "Extra segment. The destination segment of the string instructions, which is why it cannot be overridden by a prefix.",
-  ip: "Instruction pointer. The offset in CS of the next instruction. A jump, call or interrupt replaces it; only IRET restores it.",
+  ip: "Instruction pointer. The offset in CS of the next instruction. A jump, call or interrupt replaces it; RET and IRET restore it from the stack.",
 };
 
 function hex2(value: number): string {
@@ -91,12 +96,17 @@ function hex4(value: number): string {
   return (value & 0xffff).toString(16).padStart(4, "0").toUpperCase();
 }
 
-/** `0b` in groups of four, so the byte and word rows line up. */
+/**
+ * Binary in groups of four.
+ *
+ * A byte groups as two nibbles and a word as four, so the two line up in the
+ * same column. Grouping a byte by two instead reads as `00 01 00 10`, which
+ * looks like five separate values rather than one eight-bit one.
+ */
 function binaryGrouped(value: number, bits: number): string {
   const text = (value >>> 0).toString(2).padStart(bits, "0");
-  const nibbles = bits / 4;
   const out: string[] = [];
-  for (let i = 0; i < text.length; i += nibbles) out.push(text.slice(i, i + nibbles));
+  for (let i = 0; i < text.length; i += 4) out.push(text.slice(i, i + 4));
   return out.join(" ");
 }
 
@@ -158,7 +168,13 @@ export function describeRegisters(reg: Registers, ip: number): RegView[] {
   for (const name of GENERAL_ORDER) {
     const halves = BYTE_HALVES[name];
     views.push(
-      regView(name.toUpperCase(), reg[name], "general", halves?.[0] ?? null, halves?.[1] ?? null),
+      regView(
+        name.toUpperCase(),
+        reg[name],
+        "general",
+        halves?.[0] ?? null,
+        halves?.[1] ?? null,
+      ),
     );
   }
   for (const name of SEGMENT_ORDER) {
@@ -180,16 +196,22 @@ export function instructionNote(op: string): string | null {
 }
 
 const IMPLICIT: Record<string, string> = {
-  movsb: "copies a byte from [SI] to [DI] and steps both, decrementing CX",
-  movsw: "copies a word from [SI] to [DI] and steps both, decrementing CX",
-  stosb: "stores AL at [DI] and steps DI, decrementing CX",
-  stosw: "stores AX at [DI] and steps DI, decrementing CX",
-  lodsb: "loads a byte from [SI] into AL and steps SI, decrementing CX",
-  lodsw: "loads a word from [SI] into AX and steps SI, decrementing CX",
-  scasb: "compares AL with [DI] and steps DI, decrementing CX",
-  scasw: "compares AX with [DI] and steps DI, decrementing CX",
-  cmpsb: "compares [SI] with [DI] and steps both, decrementing CX",
-  cmpsw: "compares [SI] with [DI] and steps both, decrementing CX",
+  movsb:
+    "copies a byte from [SI] to [DI] and steps both, once — CX only moves under REP",
+  movsw:
+    "copies a word from [SI] to [DI] and steps both, once — CX only moves under REP",
+  stosb: "stores AL at [DI] and steps DI, once — CX only moves under REP",
+  stosw: "stores AX at [DI] and steps DI, once — CX only moves under REP",
+  lodsb:
+    "loads a byte from [SI] into AL and steps SI, once — CX only moves under REP",
+  lodsw:
+    "loads a word from [SI] into AX and steps SI, once — CX only moves under REP",
+  scasb: "compares AL with [DI] and steps DI, once — CX only moves under REP",
+  scasw: "compares AX with [DI] and steps DI, once — CX only moves under REP",
+  cmpsb:
+    "compares [SI] with [DI] and steps both, once — CX only moves under REP",
+  cmpsw:
+    "compares [SI] with [DI] and steps both, once — CX only moves under REP",
   xlat: "reads the table byte at [BX + AL] into AL",
   mul: "multiplies AL by a byte into AX, or AX by a word into DX:AX",
   imul: "multiplies signed AL into AX, or signed AX into DX:AX",
@@ -199,8 +221,9 @@ const IMPLICIT: Record<string, string> = {
   aas: "adjusts AL after a BCD subtraction, folding the borrow into AH",
   daa: "adjusts AL after a packed-BCD addition, using the carry out of it",
   das: "adjusts AL after a packed-BCD subtraction, using the carry out of it",
-  aam: "splits AL into a quotient in AH and a remainder back in AL",
-  aad: "folds AH into AL as a quotient and a remainder, for packed BCD",  cbw: "sign-extends AL into AX",
+  aam: "splits AL into a quotient in AH and a remainder back in AL, the inverse of AAD",
+  aad: "folds AH into AL as a tens-and-ones pair, the inverse of AAM — unpacked BCD, not the packed form DAA and DAS adjust",
+  cbw: "sign-extends AL into AX",
   cwd: "sign-extends AX into DX",
   lahf: "copies the flag bits into AH",
   sahf: "copies AH into the flag bits",
@@ -215,7 +238,7 @@ const IMPLICIT: Record<string, string> = {
   popf: "pops a word into the flags",
   int: "runs the DOS or BIOS service for this number; in this flat model it pushes nothing, so a handler returns with a plain RET",
   iret: "returns from a handler; the same as RET here, because INT pushed nothing",
-  les: "loads the word at [SI] into a register and the word after it into ES",
-  lds: "loads the word at [SI] into a register and the word after it into DS",
+  les: "loads a word from memory into a register and the word after it into ES; [SI] is the usual operand, not a requirement",
+  lds: "loads a word from memory into a register and the word after it into DS; [SI] is the usual operand, not a requirement",
   lea: "loads an address into a register without reading the memory it names",
 };
