@@ -79,7 +79,7 @@ The panel itself is unchanged in shape and still hex-only: the value a program i
 
 ### Correctness
 
-- 30 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
+- 41 new tests. The load-bearing ones do not check the byte split against a hand-written expectation — they check it against the emulator's own `get8` after running `MUL`, `DIV`, `XLAT`, `AAM` and `AAD`, which are the instructions that leave AX or DX holding a value whose two bytes mean different things. A test that only set `ax = 0x1234` and expected `BE`/`34` would still pass if the halves were swapped at the source; these would not
 - Two of those tests failed on the branch and the tests were wrong, not the code: `AAD` computes `AH × 10 + AL`, not `AH + AL`, and `0x0741` puts `0x41` in AL rather than AH. Both expectations were corrected against the emulator's own behaviour
 
 ### Changed
